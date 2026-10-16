@@ -218,3 +218,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Studio
+images/*
+!images/.gitkeep
+app/backend/.venv/
+app/backend/*.pt
+app/backend/*.db
+app/frontend/node_modules/
+app/frontend/dist/
+!app/frontend/src/lib/
+.DS_Store

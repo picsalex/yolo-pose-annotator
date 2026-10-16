@@ -1,0 +1,24 @@
+# Studio: forklift + people keypoint annotation, one container.
+#   SECRET_KEY=<random> docker compose up --build        then open http://localhost:8080 (admin / admin)
+#
+# Persistent storage (keep both, back both up):
+#   studio-db      /data/db       the SQLite database (users, annotations, campaigns, tasks, issues)
+#   studio-images  /data/images   the batches: one folder per uploaded zip (also the uploads' temporary files)
+# STUDIO_IMAGES=/some/host/folder puts the images in a host folder instead of the studio-images volume.
+name: studio            # compose project name: keeps the existing volumes (studio_studio-db, ...) whatever the folder name
+services:
+  app:
+    build: ./app
+    environment:
+      DATABASE_URL: sqlite:////data/db/studio.db
+      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}    # signs the sessions: set a long random value
+    volumes:
+      - studio-db:/data/db
+      - ${STUDIO_IMAGES:-studio-images}:/data/images
+    ports:
+      - "8080:8000"
+    restart: unless-stopped
+
+volumes:
+  studio-db:
+  studio-images:
