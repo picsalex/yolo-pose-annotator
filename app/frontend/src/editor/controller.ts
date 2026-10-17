@@ -1,7 +1,7 @@
 // Canvas editor: draws the image, the forklifts, the people and the issue pins, and handles
 // every mouse / keyboard interaction. Kept outside React so dragging a point redraws
 // without re-rendering components.
-import { type Box, type ForkliftAnn, NAMES, boxOf, exportForklift, fromRoof, upgrade } from '@/lib/forklift'
+import { type Box, type ForkliftAnn, NAMES, boxOf, exportForklift, fromRoof } from '@/lib/forklift'
 import { type Model, hiddenPoints } from '@/lib/visibility'
 
 export interface Human { id: string; box: Box; kpts: [number, number, number][] }
@@ -21,18 +21,6 @@ const PERSON_KEYPOINTS = ['middle of the head', 'waist', 'left foot', 'right foo
 const PERSON_LABELS = ['H', 'W', 'L', 'R']        // drawn next to each point (left / right: the person's own)
 const PERSON_EDGES = [[0, 1], [1, 2], [1, 3]]
 
-/** People annotated by early versions (17 COCO keypoints) -> the 4 person keypoints (same rule as the export). */
-function cocoToPerson(k: [number, number, number][]): [number, number, number][] {
-  const seen = (...idx: number[]) => idx.map((i) => k[i]).filter((p) => p[2])
-  const mean = (pts: [number, number, number][]): [number, number, number] =>
-    pts.length ? [pts.reduce((a, p) => a + p[0], 0) / pts.length, pts.reduce((a, p) => a + p[1], 0) / pts.length, 2] : [0, 0, 0]
-  const foot = (ankle: number, knee: number): [number, number, number] => {
-    const a = k[ankle], n = k[knee]
-    if (!a[2]) return [0, 0, 0]
-    return n[2] ? [a[0] + 0.2 * (a[0] - n[0]), a[1] + 0.2 * (a[1] - n[1]), 2] : [a[0], a[1], 2]
-  }
-  return [mean(seen(0, 1, 2, 3, 4)), mean(seen(11, 12)), foot(15, 13), foot(16, 14)]
-}
 // a standing person facing the camera, in box units (the person's left is on the image right):
 // a person drawn by hand starts with its keypoints here, hidden until dragged into place
 const PERSON_TEMPLATE = [[0.5, 0.07], [0.5, 0.53], [0.62, 0.98], [0.38, 0.98]]
@@ -47,7 +35,7 @@ const resizeCursor = (sx: number, sy: number) =>
   sx < 0 ? 'ns-resize' : sy < 0 ? 'ew-resize' : (sx === 0) === (sy === 1) ? 'nwse-resize' : 'nesw-resize'
 const PIN_RADIUS = 9
 /** An issue pinned on the image (id -1: the one being written). */
-export interface Pin { id: number; x: number; y: number; label: string; resolved: boolean }
+interface Pin { id: number; x: number; y: number; label: string; resolved: boolean }
 const LOUPE = { size: 160, zoom: 4, margin: 12 }   // magnifier while a point is placed or dragged (screen px)
 const uid = () => Math.random().toString(36).slice(2, 10)
 
@@ -86,7 +74,7 @@ export class Editor {
   private space = false                                  // Space held: the hand (pan) instead of the current tool
   // a selected forklift / person dragged by its body, moved as a whole (from: where the drag began)
   private moving: { from: [number, number]; orig: (ForkliftAnn | Human)[]; moved: boolean } | null = null
-  private newBox: { x: number; y: number; x2: number; y2: number } | null = null
+  private newBox: Box | null = null                  // a person's box while it is drawn (x1, y1: where it began)
   private cursor: [number, number] = [0, 0]
   private undoStack: string[] = []
   private redoStack: string[] = []
@@ -108,12 +96,7 @@ export class Editor {
     this.img = img
     this.W = img.naturalWidth
     this.H = img.naturalHeight
-    this.ann = {
-      forklifts: (ann?.forklifts ?? []).filter((f) => f.kp?.length >= 4).map(upgrade)   // older layouts converted
-        .map((f) => ({ ...f, kp: f.kp.map(this.inImage), box: f.box && this.boxInImage(f.box) })),
-      humans: (ann?.humans ?? []).map((h) => (h.kpts.length === 17 ? { ...h, kpts: cocoToPerson(h.kpts) } : h))
-        .map((h) => ({ ...h, box: this.boxInImage(h.box), kpts: h.kpts.map(([x, y, v]) => [...this.inImage([x, y]), v]) })),
-    }
+    this.ann = { forklifts: ann?.forklifts ?? [], humans: ann?.humans ?? [] }
     this.undoStack = []
     this.redoStack = []
     this.selected = []
@@ -132,7 +115,6 @@ export class Editor {
   /** What is saved: the annotation plus, per forklift, its exported box and 8 keypoints. */
   serialize() {
     return {
-      version: 5,                                 // 5: 8 forklift keypoints
       humans: this.ann.humans,
       forklifts: this.ann.forklifts.map((f) => ({ ...f, derived: exportForklift(f, this.W, this.H) })),
     }
@@ -164,7 +146,6 @@ export class Editor {
   }
   // nothing goes outside the image: every point and box edge is kept inside it
   private inImage = ([x, y]: number[]): [number, number] => [Math.min(Math.max(x, 0), this.W), Math.min(Math.max(y, 0), this.H)]
-  private boxInImage = (b: Box): Box => [...this.inImage([b[0], b[1]]), ...this.inImage([b[2], b[3]])]
   /** A move (dx, dy) cut short so that all the points stay inside the image. */
   private within(pts: number[][], dx: number, dy: number): [number, number] {
     const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1])
@@ -279,7 +260,7 @@ export class Editor {
       this.changed()
       return
     }
-    if (this.mode === 'human') { this.newBox = { x, y, x2: x, y2: y }; return }
+    if (this.mode === 'human') { this.newBox = [x, y, x, y]; return }
     if (this.mode === 'comment') { this.mode = 'idle'; this.changed(); this.onComment(x, y); return }
     const hit = this.hitTest(sx, sy)
     const pin = hit ? undefined : this.pins.find((p) => { const [px, py] = this.toScreen(p.x, p.y); return Math.hypot(px - sx, py - sy) < PIN_RADIUS })
@@ -319,8 +300,8 @@ export class Editor {
       this.requestDraw()
       return
     }
-    if (this.newBox) { this.newBox.x2 = x; this.newBox.y2 = y; this.requestDraw(); return }
-    if (this.marquee) { this.marquee[2] = x; this.marquee[3] = y; this.requestDraw(); return }
+    const area = this.newBox ?? this.marquee
+    if (area) { area[2] = x; area[3] = y; this.requestDraw(); return }
     const m = this.moving
     if (m) {
       if (!m.moved) { this.snapshot(); m.moved = true }          // a plain click is no undo step
@@ -381,7 +362,7 @@ export class Editor {
       this.changed()
     }
     if (this.newBox) {
-      const { x, y, x2, y2 } = this.newBox
+      const [x, y, x2, y2] = this.newBox
       this.newBox = null
       if (Math.abs(x2 - x) > 4 && Math.abs(y2 - y) > 4) {
         this.snapshot()
@@ -478,16 +459,8 @@ export class Editor {
 
   setHighlight(id: string | null) { this.highlight = id; this.requestDraw() }
 
-  /** Hide / show one instance (view only). X = the selected ones. */
-  toggleHidden(id?: string) {
-    for (const t of id ? [id] : this.selected) {
-      if (this.hidden.has(t)) this.hidden.delete(t)
-      else { this.hidden.add(t); this.selected = this.selected.filter((s) => s !== t) }
-    }
-    this.changed()
-  }
   showAll() { this.hidden.clear(); this.changed() }
-  /** Show / hide these instances (view only): the layers panel's eyes. */
+  /** Show / hide these instances (view only): the layers panel's eyes, X (the selection). */
   setHidden(ids: string[], hide: boolean) {
     for (const id of ids) if (hide) this.hidden.add(id); else this.hidden.delete(id)
     if (hide) this.selected = this.selected.filter((s) => !ids.includes(s))
@@ -542,9 +515,8 @@ export class Editor {
     for (const h of this.ann.humans) if (!this.hidden.has(h.id)) this.drawHuman(h, focus)
     for (const f of this.ann.forklifts) if (!this.hidden.has(f.id)) this.drawForklift(f, focus)
     for (const p of this.pins) this.drawPin(p)
-    if (this.marquee) {
-      const [x1, y1, x2, y2] = this.marquee
-      this.path([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], true, '#9ca3af', 1, [4, 3])
+    for (const [b, color, dash] of [[this.marquee, '#9ca3af', [4, 3]], [this.newBox, COLORS.person, []]] as const) {
+      if (b) this.path([[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], true, color, 1.5, [...dash])
     }
 
     if (this.mode === 'roof') {
@@ -552,13 +524,6 @@ export class Editor {
       this.pendingRoof.forEach(([x, y], i) => this.dot(x, y, '#22c55e', true, String(i)))
     }
     if (this.mode === 'roof' || this.drag) this.drawLoupe()
-    if (this.newBox) {
-      const [x1, y1] = this.toScreen(this.newBox.x, this.newBox.y)
-      const [x2, y2] = this.toScreen(this.newBox.x2, this.newBox.y2)
-      c.strokeStyle = COLORS.person
-      c.lineWidth = 1.5
-      c.strokeRect(x1, y1, x2 - x1, y2 - y1)
-    }
   }
 
   /** A polyline through image points (closed: a polygon). */

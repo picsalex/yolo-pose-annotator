@@ -3,7 +3,7 @@ annotation campaigns: their people per step and their tasks (one per image and s
 import os
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, event, inspect, text
+from sqlalchemy import JSON, Boolean, DateTime, Float, ForeignKey, Integer, String, Text, create_engine, event
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///./studio.db")
@@ -36,12 +36,11 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(128))
     role: Mapped[str] = mapped_column(String(16), default="annotator")   # admin | manager | annotator
     theme: Mapped[str] = mapped_column(String(8), default="dark")         # dark | light
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
 
 class Batch(Base):
-    """An uploaded zip of images (a subfolder of IMAGES_DIR). Called "dataset" before batches."""
-    __tablename__ = "datasets"
+    """An uploaded zip of images (a subfolder of IMAGES_DIR)."""
+    __tablename__ = "batches"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True)
 
@@ -49,7 +48,7 @@ class Batch(Base):
 class Image(Base):
     __tablename__ = "images"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    batch_id: Mapped[int] = mapped_column("dataset_id", ForeignKey("datasets.id", ondelete="CASCADE"), index=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id", ondelete="CASCADE"), index=True)
     filename: Mapped[str] = mapped_column(String(512))
     width: Mapped[int] = mapped_column(Integer)
     height: Mapped[int] = mapped_column(Integer)
@@ -61,8 +60,6 @@ class Annotation(Base):
     __tablename__ = "annotations"
     image_id: Mapped[int] = mapped_column(ForeignKey("images.id", ondelete="CASCADE"), primary_key=True)
     data: Mapped[dict] = mapped_column(JSON)
-    updated_by: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
 
 
 class Issue(Base):
@@ -81,7 +78,7 @@ class Campaign(Base):
     """An annotation campaign on a batch: an annotate task per image, then a review task per annotated one."""
     __tablename__ = "campaigns"
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    batch_id: Mapped[int] = mapped_column(ForeignKey("datasets.id", ondelete="CASCADE"), index=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
 
@@ -117,24 +114,3 @@ def init_db():
     if path and path != ":memory:":
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     Base.metadata.create_all(engine)
-    # columns added after the first release (create_all does not alter existing tables)
-    cols = {c["name"] for c in inspect(engine).get_columns("users")}
-    task_cols = {c["name"] for c in inspect(engine).get_columns("tasks")}
-    with engine.begin() as c:
-        if "rounds" not in task_cols:
-            # a review used to end at a rejection and a new one came with the fix: one review per image
-            # now, reopened by the fix; the rejections before it become its rounds
-            c.execute(text("ALTER TABLE tasks ADD COLUMN rounds INTEGER DEFAULT 0"))
-            c.execute(text("""UPDATE tasks SET rounds = (SELECT COUNT(*) FROM tasks r WHERE r.step = 'review'
-                AND r.result = 'rejected' AND r.campaign_id = tasks.campaign_id AND r.image_id = tasks.image_id
-                AND r.id <= tasks.id) WHERE step = 'review'"""))
-            c.execute(text("""DELETE FROM tasks WHERE step = 'review' AND EXISTS (SELECT 1 FROM tasks n
-                WHERE n.step = 'review' AND n.campaign_id = tasks.campaign_id AND n.image_id = tasks.image_id
-                AND n.id > tasks.id)"""))
-        if "theme" not in cols:
-            c.execute(text("ALTER TABLE users ADD COLUMN theme VARCHAR(8) DEFAULT 'dark'"))
-        if "role" not in cols:                                            # is_admin -> role
-            c.execute(text("ALTER TABLE users ADD COLUMN role VARCHAR(16) DEFAULT 'annotator'"))
-            c.execute(text("UPDATE users SET role = CASE WHEN is_admin THEN 'admin' ELSE 'annotator' END"))
-            c.execute(text("ALTER TABLE users DROP COLUMN is_admin"))
-        c.execute(text("UPDATE images SET status = 'annotated' WHERE status = 'done'"))   # before campaigns: done

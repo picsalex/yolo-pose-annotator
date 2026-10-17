@@ -1,17 +1,19 @@
 # Studio: forklift + people keypoint annotation, one container.
-#   SECRET_KEY=<random> docker compose up --build        then open http://localhost:8080 (admin / admin)
+#   docker compose up --build        then open http://localhost:8080; the first admin's password is in the
+#   logs (docker compose logs app), or ADMIN_PASSWORD=<it> docker compose up sets it
 #
 # Persistent storage (keep both, back both up):
 #   studio-db      /data/db       the SQLite database (users, annotations, campaigns, tasks, issues)
 #   studio-images  /data/images   the batches: one folder per uploaded zip (also the uploads' temporary files)
 # STUDIO_IMAGES=/some/host/folder puts the images in a host folder instead of the studio-images volume.
-name: studio            # compose project name: keeps the existing volumes (studio_studio-db, ...) whatever the folder name
+name: studio            # compose project name: the volumes are studio_studio-db and studio_studio-images
 services:
   app:
     build: ./app
     environment:
-      DATABASE_URL: sqlite:////data/db/studio.db
-      SECRET_KEY: ${SECRET_KEY:-change-me-in-production}    # signs the sessions: set a long random value
+      SECRET_KEY: ${SECRET_KEY:-}            # signs the sessions; empty: one generated and kept in studio-db
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}    # the first admin's password (empty: random, printed in the logs)
+      MAX_UPLOAD_GB: ${MAX_UPLOAD_GB:-5}     # biggest zip accepted
     volumes:
       - studio-db:/data/db
       - ${STUDIO_IMAGES:-studio-images}:/data/images

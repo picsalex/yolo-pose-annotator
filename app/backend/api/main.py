@@ -6,7 +6,9 @@ Roles: annotators work on the images of their tasks; managers and admins (staff)
 everything, except that only admins manage admin accounts and delete batches."""
 import os
 import shutil
+from contextlib import asynccontextmanager
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -16,11 +18,11 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from PIL import Image as PILImage
 from pydantic import BaseModel
-from sqlalchemy import delete, func, select
+from sqlalchemy import func, select
 from starlette.background import BackgroundTask
 
 from .auth import (COOKIE, LIFETIME, admin_user, check_password, current_user, hash_password, is_staff, make_token,
-                   seed_admin, staff_user)
+                   seed_admin, staff_user, valid_password)
 from .db import Annotation, Batch, Image, Issue, Session, Task, User, init_db, now
 from .export import write_zip
 from .workflow import dispatch_all, open_campaign, router
@@ -28,19 +30,35 @@ from .workflow import dispatch_all, open_campaign, router
 IMAGES_DIR = Path(os.environ.get("IMAGES_DIR", "../../images")).resolve()
 STATIC_DIR = Path(os.environ.get("STATIC_DIR", "../frontend/dist")).resolve()
 IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
-
-app = FastAPI(title="Studio")
-app.include_router(router)
+MAX_UPLOAD = int(float(os.environ.get("MAX_UPLOAD_GB", "5")) * 2**30)     # bytes per zip
 
 
-@app.on_event("startup")
-def startup():
+
+@asynccontextmanager
+async def lifespan(_):
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     for left in IMAGES_DIR.glob(".tmp-*"):          # uploads / exports cut short by a restart
         left.unlink(missing_ok=True)
     init_db()
     seed_admin()
     scan()
+    yield
+
+
+app = FastAPI(title="Studio", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)   # no public API docs
+app.include_router(router)
+
+# the page may only load its own scripts, styles and images, and nobody may frame it
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+       "connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    r = await call_next(request)
+    r.headers.update({"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY",
+                      "Referrer-Policy": "same-origin", "Content-Security-Policy": CSP})
+    return r
 
 
 def _tmp() -> Path:
@@ -61,16 +79,36 @@ class Login(BaseModel):
 
 
 def user_json(u: User):
-    return {"id": u.id, "username": u.username, "role": u.role, "theme": u.theme or "dark"}
+    return {"id": u.id, "username": u.username, "role": u.role, "theme": u.theme}
+
+
+# password guessing: after LIMIT failures in WINDOW seconds from one address, or on one username
+# (3 x LIMIT: many addresses), sign-in waits until the oldest failure leaves the window
+FAILS: dict[str, list[float]] = {}
+LIMIT, WINDOW = 10, 900
+DUMMY_HASH = hash_password("not a password")          # an unknown user costs as much time as a known one
+
+
+def _guesses(key: str) -> list[float]:
+    if len(FAILS) > 10_000:                              # a flood of made-up usernames: start over
+        FAILS.clear()
+    FAILS[key] = [t for t in FAILS.get(key, []) if t > time.time() - WINDOW]
+    return FAILS[key]
 
 
 @app.post("/api/login")
-def login(body: Login, response: Response):
+def login(body: Login, request: Request, response: Response):
+    keys = {f"ip:{request.client.host if request.client else ''}": LIMIT, f"user:{body.username.lower()}": 3 * LIMIT}
+    if any(len(_guesses(k)) >= n for k, n in keys.items()):
+        raise HTTPException(429, "too many failed sign-ins: try again in 15 minutes")
     with Session() as s:
         u = s.scalar(select(User).where(User.username == body.username))
-    if not u or not check_password(body.password, u.password_hash):
+    if not check_password(body.password, u.password_hash if u else DUMMY_HASH) or not u:
+        for k in keys:
+            _guesses(k).append(time.time())
         raise HTTPException(401, "wrong username or password")
-    response.set_cookie(COOKIE, make_token(u), httponly=True, samesite="lax",
+    FAILS.pop(f"user:{body.username.lower()}", None)
+    response.set_cookie(COOKIE, make_token(u), httponly=True, samesite="lax", secure=request.url.scheme == "https",
                         max_age=int(LIFETIME.total_seconds()))
     return user_json(u)
 
@@ -132,12 +170,14 @@ def list_users(_: User = Depends(staff_user)):
 @app.post("/api/users")
 def create_user(body: NewUser, actor: User = Depends(staff_user)):
     _may_manage(actor, body.role)
-    if not body.username.strip() or not body.password:
-        raise HTTPException(400, "username and password required")
+    name = body.username.strip()
+    if not name:
+        raise HTTPException(400, "username required")
+    valid_password(body.password)
     with Session() as s:
-        if s.scalar(select(User).where(User.username == body.username)):
+        if s.scalar(select(User).where(User.username == name)):
             raise HTTPException(409, "username taken")
-        u = User(username=body.username.strip(), password_hash=hash_password(body.password), role=body.role)
+        u = User(username=name, password_hash=hash_password(body.password), role=body.role)
         s.add(u)
         s.commit()
         return user_json(u)
@@ -170,7 +210,8 @@ def set_password(uid: int, body: Password, actor: User = Depends(staff_user)):
         if not u:
             raise HTTPException(404)
         _may_manage(actor, u.role)
-        u.password_hash = hash_password(body.password)
+        valid_password(body.password)
+        u.password_hash = hash_password(body.password)                  # their open sessions end
         s.commit()
     return {"ok": True}
 
@@ -199,8 +240,6 @@ def scan(only: str | None = None):
     """Register every image under IMAGES_DIR/<batch>/ (recursively; only: that batch).
     Returns the new image count."""
     added = 0
-    if not IMAGES_DIR.is_dir():
-        return 0
     with Session() as s:
         for folder in sorted(p for p in IMAGES_DIR.iterdir() if p.is_dir() and not p.name.startswith(".")
                              and only in (None, p.name)):
@@ -233,8 +272,12 @@ def _unpack(zip_path: Path, folder: Path) -> int:
     except zipfile.BadZipFile:
         raise HTTPException(400, "not a zip file")
     with zf:
-        names = [Path(n) for n in zf.namelist() if not n.endswith("/") and Path(n).suffix.lower() in IMAGE_EXT
-                 and not any(p.startswith(".") or p == "__MACOSX" for p in Path(n).parts)]
+        infos = [i for i in zf.infolist() if not i.is_dir() and Path(i.filename).suffix.lower() in IMAGE_EXT
+                 and not any(p.startswith(".") or p == "__MACOSX" for p in Path(i.filename).parts)]
+        # what it unpacks to (as the zip declares it; a lying zip stops at the disk's end anyway) must fit
+        if sum(i.file_size for i in infos) > shutil.disk_usage(IMAGES_DIR).free - 2**30:
+            raise HTTPException(507, "not enough disk space to unpack this zip")
+        names = [Path(i.filename) for i in infos]
         strip = len({n.parts[0] for n in names}) == 1 and all(len(n.parts) > 1 for n in names)
         written = 0
         for n in names:
@@ -255,10 +298,13 @@ async def upload(request: Request, name: str, _: User = Depends(staff_user)):
     name = name.strip()
     if not name or name.startswith(".") or any(c in name for c in '/\\:'):
         raise HTTPException(400, "invalid batch name")
-    tmp = _tmp()
+    tmp, size = _tmp(), 0
     try:
         with tmp.open("wb") as f:
             async for chunk in request.stream():
+                size += len(chunk)
+                if size > MAX_UPLOAD:
+                    raise HTTPException(413, f"the zip is bigger than {MAX_UPLOAD / 2**30:g} GB (MAX_UPLOAD_GB)")
                 f.write(chunk)
         if not await run_in_threadpool(_unpack, tmp, IMAGES_DIR / name):
             raise HTTPException(400, "no new images in the zip")
@@ -269,16 +315,13 @@ async def upload(request: Request, name: str, _: User = Depends(staff_user)):
 
 @app.delete("/api/batches/{bid}")
 def delete_batch(bid: int, _: User = Depends(admin_user)):
-    """The batch, its campaigns, its images' annotations and issues, and its image files."""
+    """The batch, and with it (the database cascades) its images, their annotations, issues and tasks, its
+    campaigns; then its image files."""
     with Session() as s:
         b = s.get(Batch, bid)
         if not b:
             raise HTTPException(404)
-        ids = select(Image.id).where(Image.batch_id == bid)
-        for table in (Task, Issue, Annotation):
-            s.execute(delete(table).where(table.image_id.in_(ids)))
-        s.execute(delete(Image).where(Image.batch_id == bid))
-        s.delete(b)                     # its campaigns and their steps go with it
+        s.delete(b)
         s.commit()
     shutil.rmtree(IMAGES_DIR / b.name, ignore_errors=True)
     return {"ok": True}
@@ -294,7 +337,7 @@ def list_batches(_: User = Depends(staff_user)):
             c = open_campaign(s, b.id)
             out.append({"id": b.id, "name": b.name, "total": sum(status.values()),
                         "annotated": status.get("annotated", 0) + status.get("approved", 0), "approved": status.get("approved", 0),
-                        "campaign": c and {"id": c.id, "name": c.name}})
+                        "campaign": c and c.name})
     return out
 
 
@@ -333,9 +376,9 @@ def image_file(iid: int, user: User = Depends(current_user)):
 @app.get("/api/images/{iid}/annotation")
 def get_annotation(iid: int, user: User = Depends(current_user)):
     with Session() as s:
-        img = _image(s, iid, user)
+        _image(s, iid, user)
         ann = s.get(Annotation, iid)
-        return {"status": img.status, "data": ann.data if ann else None}
+        return {"data": ann.data if ann else None}
 
 
 class Save(BaseModel):
@@ -347,11 +390,7 @@ def save_annotation(iid: int, body: Save, user: User = Depends(current_user)):
     """The annotation only: the tasks move the image's status (workflow.py)."""
     with Session() as s:
         _image(s, iid, user)
-        ann = s.get(Annotation, iid)
-        if ann:
-            ann.data, ann.updated_by = body.data, user.id
-        else:
-            s.add(Annotation(image_id=iid, data=body.data, updated_by=user.id))
+        s.merge(Annotation(image_id=iid, data=body.data))
         s.commit()
     return {"ok": True}
 

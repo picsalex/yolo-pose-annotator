@@ -7,7 +7,9 @@ pose format.
 docker compose up --build
 ```
 
-Open http://localhost:8080 and sign in with **admin / admin** (change it on the Admin page).
+Open http://localhost:8080 and sign in as **admin**: on the first start its password is
+random and printed in the logs (`docker compose logs app`), unless `ADMIN_PASSWORD` sets
+it. Change it on the Admin page.
 The sun / moon button switches between the light and dark theme (saved per user).
 
 ## Deploying
@@ -27,8 +29,10 @@ Environment:
 
 | Variable | Value |
 |---|---|
-| `SECRET_KEY` | **required**: a long random string (signs the sessions; changing it signs everyone out) |
-| `DATABASE_URL` | `sqlite:////data/db/studio.db` (set in the compose file and image) |
+| `SECRET_KEY` | signs the sessions. Empty: a random one is generated and kept in `/data/db/secret_key`. When set, a long random string (`python3 -c "import secrets; print(secrets.token_urlsafe(48))"`); changing it signs everyone out |
+| `ADMIN_PASSWORD` | the first admin's password, used once on the first start (empty: a random one, printed in the logs) |
+| `MAX_UPLOAD_GB` | the biggest zip accepted (default 5) |
+| `DATABASE_URL` | `sqlite:////data/db/studio.db` (set in the image) |
 | `IMAGES_DIR` | `/data/images` (set in the image) |
 
 Uploads: a zip (up to ~2 GB) is sent in one request, then unpacked before the
@@ -36,6 +40,20 @@ response. A reverse proxy in front must let it through: request body limit
 above the biggest zip (nginx `client_max_body_size 3g;`) and a read timeout long
 enough to unpack it (`proxy_read_timeout 600s;`). `GET /api/health` answers when
 the app is up (the image's health check uses it).
+
+Security, when it is reachable from the internet:
+
+- In the app: no default password (see above) nor known session key; passwords of
+  8 characters or more, bcrypt-hashed; a new password ends that user's sessions;
+  10 failed sign-ins from one address (30 on one username) block it for 15 minutes;
+  session cookie `HttpOnly`, `SameSite=Lax`, and `Secure` behind HTTPS; strict
+  security headers (CSP, no framing, nosniff); no public API docs; uploads capped
+  (`MAX_UPLOAD_GB`) and refused when unpacking would fill the disk; the container
+  runs as an unprivileged user (uid 10001).
+- To do when deploying: serve it **only over HTTPS**, through a reverse proxy
+  (add HSTS there), and do not publish the container's port to the internet
+  directly (the app trusts the proxy's `X-Forwarded-*` headers: the client's
+  address and https). Sign in once, then change the admin password.
 
 Backups: copy `/data/images`, and the database with a consistent snapshot while
 it runs:
@@ -181,18 +199,8 @@ keypoints (`kpt_shape: [8, 3]`), because YOLO needs one shape for all classes:
 | forklift | 1-4 roof corners (front-left, back-left, back-right, front-right), 5-8 bottom corners on the truck (same order) |
 | person | 1 middle of the head, 2 waist, 3 left foot, 4 right foot, 5-8 0 0 0 |
 
-People saved by early versions of Studio (17 COCO keypoints) are converted: head =
-middle of the visible nose / eyes / ears, waist = between the hips, each foot = the
-ankle pushed a little further from the knee, towards the floor.
-
 - A keypoint that is hidden or outside the image is `0 0 0`.
-- Forklifts saved with the older 10-point layout (wheel centres, back / front
-  middle) are converted when their image is opened: the roof is kept and the wheel
-  centres become the bottom corners' starting places, to be checked and saved.
-  Until then the image is left out of the export and listed in `NEEDS_REVIEW.txt`.
 - Each box is exported as drawn (a forklift's: around its keypoints unless adjusted by hand), clipped to the image.
-- Forklifts saved by older versions of Studio (another layout) are not loaded
-  nor exported: annotate them again.
 - There is no `flip_idx`: the two classes would need different left/right swaps,
   so YOLO disables horizontal-flip augmentation for this dataset.
 
@@ -222,8 +230,8 @@ as the forklift simulator, `simulation/simulate.py` in the dhl repo).
 | `toyota_3w` Toyota 8FBE 3-wheel | Toyota 8FBE18U spec: 1885 mm to the fork face, 1054 mm wide, guard 2057 mm, wheelbase 1311 mm, twin rear steer wheels; shapes from side and rear photos | the corners of the flat roof (front: where the front posts' curve starts) | the floor below the counterweight's rear outer corners (there are no side rear wheels); 6 = between the bottoms of the two legs around the rear wheel notch |
 
 The models are built in `tools/forklift_models.py` (one function per model, the
-shared mesh primitives in `tools/forklift_mesh.py`), then converted to the
-assets `app/frontend/public/forklifts/<id>.json` (+ `index.json`):
+shared mesh primitives in `tools/forklift_mesh.py`, GLB files in `tools/forklifts/`);
+the one the editor uses is converted to `app/frontend/public/forklifts/crown_c5.json`:
 
 ```bash
 pip install -r tools/requirements.txt          # numpy, trimesh, pyvista
@@ -232,7 +240,7 @@ python -m tools.make_forklift_asset            # from the repo root
 
 To add a model: write its spec + build function in `tools/forklift_models.py`
 (same node names and keypoint conventions), add it to `MODELS`, run the command
-above. The simulator (dhl repo) keeps its own copy of the GLB files in
+above (`MODEL` in `tools/make_forklift_asset.py` picks the one the editor uses). The simulator (dhl repo) keeps its own copy of the GLB files in
 `simulation/forklifts/`: copy new or changed ones there.
 
 ## Layout
@@ -242,7 +250,7 @@ above. The simulator (dhl repo) keeps its own copy of the GLB files in
 ├── docker-compose.yml       the app (port 8080) and its two volumes (studio-db, studio-images)
 ├── images/                  batches when developing without Docker (Docker: the studio-images volume)
 ├── tools/forklift_models.py       the forklift models (GLB in tools/forklifts/)
-├── tools/make_forklift_asset.py   GLB -> overlay assets (public/forklifts/)
+├── tools/make_forklift_asset.py   GLB -> the editor's model asset (public/forklifts/)
 ├── tools/forklift_mesh.py, glb.py mesh primitives / GLB loader for the two above
 └── app/
     ├── Dockerfile           builds the web app, then the API image serving it

@@ -88,7 +88,7 @@ function BatchesCard({ user, batches, run }: { user: User; batches: BatchRow[]; 
               <span className="font-medium">{b.name}</span>
               <span className="text-sm text-muted-foreground">{b.total} images · {b.annotated} annotated · {b.approved} approved</span>
               <Progress value={b.total ? (100 * b.approved) / b.total : 0} className="w-40" />
-              {b.campaign ? <Badge variant="secondary">campaign: {b.campaign.name}</Badge> : <Badge variant="outline">no campaign running</Badge>}
+              {b.campaign ? <Badge variant="secondary">campaign: {b.campaign}</Badge> : <Badge variant="outline">no campaign running</Badge>}
               <div className="ml-auto flex items-center gap-2">
                 <Button size="sm" variant="outline" onClick={() => { window.location.hash = `/annotate/${b.id}` }} title="Browse and correct its images">Open</Button>
                 {user.role === 'admin' && (

@@ -35,17 +35,6 @@ export function boxOf(f: ForkliftAnn): Box {
   return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]
 }
 
-/** A forklift saved with an older layout, in the current one: the roof is kept; the 10-point
- * layout's wheel centres (4-7) become the bottom corners' starting places, other layouts get
- * fresh bottom corners below the roof. Their positions are to be checked. */
-export function upgrade(f: ForkliftAnn): ForkliftAnn {
-  if (f.kp.length === KEYPOINTS) return f
-  const kp = f.kp.length === 10 ? f.kp.slice(0, KEYPOINTS) : fromRoof(f.kp.slice(0, 4))
-  const vis: Record<number, boolean> = {}
-  for (const [i, v] of Object.entries(f.vis ?? {})) if (Number(i) < (f.kp.length === 10 ? KEYPOINTS : 4)) vis[Number(i)] = v
-  return { ...f, kp, vis }
-}
-
 /** The forklift's exported box (boxOf, inside the image) and its 8 keypoints [x, y, v]
  * (hidden or outside the image: 0 0 0). */
 export function exportForklift(ann: ForkliftAnn, W: number, H: number) {

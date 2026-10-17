@@ -8,7 +8,7 @@ import { textarea } from '@/components/issue-thread'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
-export interface Ask {
+interface Ask {
   title: string
   message?: React.ReactNode
   confirm?: string                  // the confirm button (default OK)

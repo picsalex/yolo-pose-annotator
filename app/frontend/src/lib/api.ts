@@ -5,19 +5,19 @@ export const isStaff = (u: User) => u.role !== 'annotator'
 export interface UserRow extends User { tasks: { todo: number; done: number } }
 export interface BatchRow {
   id: number; name: string; total: number; annotated: number; approved: number
-  campaign: { id: number; name: string } | null
+  campaign: string | null                            // the name of its campaign in progress
 }
 export type Step = 'annotate' | 'review'
 export type TaskState = 'todo' | 'progress' | 'fix' | 'done'
 export interface Task {
   id: number; step: Step; state: TaskState; result: 'approved' | 'rejected' | null; comment: string | null
-  image_id: number; filename: string; width: number; height: number; batch_id: number; batch: string; campaign: string
+  image_id: number; filename: string; width: number; height: number; batch: string
   open_issues: number; updated_at: string | null
 }
 export interface TaskList { items: Task[]; total: number; counts: Record<TaskState, number>; batches: { id: number; name: string }[] }
 export interface StepCount { todo: number; done: number }
 export interface Campaign {
-  id: number; name: string; batch_id: number; batch: string; created_at: string; members: Record<Step, number[]>
+  id: number; name: string; batch: string; created_at: string; members: Record<Step, number[]>
   total: number; annotated: number; approved: number; rejected: number; done: boolean
   people: { id: number | null; username: string; annotate: StepCount; review: StepCount }[]
 }
@@ -34,7 +34,6 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
     method: init.method ?? (init.body === undefined ? 'GET' : 'POST'),
     headers: init.body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: init.body === undefined ? undefined : JSON.stringify(init.body),
-    credentials: 'same-origin',
   })
   if (!res.ok) {
     let msg = res.statusText
@@ -43,8 +42,6 @@ export async function api<T>(path: string, init: { method?: string; body?: unkno
   }
   return res.json() as Promise<T>
 }
-
-export const imageUrl = (id: number) => `/api/images/${id}/file`
 
 /** A zip of images into batch `name` (new or existing), with upload progress (0-100). */
 export function uploadZip(file: File, name: string, onProgress: (pct: number) => void): Promise<{ added: number }> {

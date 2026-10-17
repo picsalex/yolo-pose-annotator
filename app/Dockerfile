@@ -15,9 +15,14 @@ RUN pip install -r requirements.txt
 COPY backend/api ./api
 COPY --from=web /web/dist ./static
 ENV STATIC_DIR=/app/static \
-    IMAGES_DIR=/data/images
+    IMAGES_DIR=/data/images \
+    DATABASE_URL=sqlite:////data/db/studio.db
+# an unprivileged user owns the data folders (a new volume takes their owner)
+RUN useradd --system --uid 10001 studio && mkdir -p /data/db /data/images && chown -R studio:studio /data
+USER studio
 EXPOSE 8000
 VOLUME ["/data/db", "/data/images"]
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"
-CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers: behind the HTTPS proxy, requests count as https (secure cookie) and come from the client's address
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

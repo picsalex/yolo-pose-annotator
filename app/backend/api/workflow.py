@@ -80,7 +80,7 @@ def campaign_json(s, c: Campaign):
     for uid in members["annotate"] + members["review"]:
         per.setdefault(uid, {s_: {"todo": 0, "done": 0} for s_ in STEPS})
     rejected = s.scalar(select(func.coalesce(func.sum(Task.rounds), 0)).where(Task.campaign_id == c.id))
-    return {"id": c.id, "name": c.name, "batch_id": c.batch_id, "batch": s.get(Batch, c.batch_id).name,
+    return {"id": c.id, "name": c.name, "batch": s.get(Batch, c.batch_id).name,
             "created_at": c.created_at.isoformat(), "members": members, "total": total,
             "annotated": status.get("annotated", 0) + status.get("approved", 0), "approved": status.get("approved", 0),
             "rejected": rejected, "done": total > 0 and status.get("approved", 0) == total,
@@ -156,9 +156,7 @@ def delete_campaign(cid: int, _: User = Depends(staff_user)):
         c = s.get(Campaign, cid)
         if not c:
             raise HTTPException(404)
-        s.execute(delete(Task).where(Task.campaign_id == cid))
-        s.execute(delete(Member).where(Member.campaign_id == cid))
-        s.delete(c)
+        s.delete(c)                             # its steps and tasks go with it (the database cascades)
         s.commit()
     return {"ok": True}
 
@@ -177,20 +175,20 @@ def state_of(t: Task) -> str:
     return "done" if t.status == "done" else "fix" if t.comment else "progress" if t.started_at else "todo"
 
 
-def task_json(t: Task, img: Image, batch: Batch, campaign: str, issues: int = 0):
+def task_json(t: Task, img: Image, batch: Batch, issues: int = 0):
     at = t.done_at or t.started_at
     return {"id": t.id, "step": t.step, "state": state_of(t), "result": t.result, "comment": t.comment,
             "image_id": img.id, "filename": img.filename, "width": img.width, "height": img.height,
-            "batch_id": batch.id, "batch": batch.name, "campaign": campaign, "open_issues": issues,
+            "batch": batch.name, "open_issues": issues,
             "updated_at": at.isoformat() if at else None}
 
 
 def _mine(user: User):
-    """My tasks, with their image, batch, campaign name and open issue count."""
+    """My tasks, with their image, batch and open issue count."""
     issues = select(Issue.image_id, func.count().label("n")).where(Issue.resolved.is_(False)).group_by(Issue.image_id).subquery()
-    return (select(Task, Image, Batch, Campaign.name, func.coalesce(issues.c.n, 0))
+    return (select(Task, Image, Batch, func.coalesce(issues.c.n, 0))
             .join(Image, Task.image_id == Image.id).join(Batch, Image.batch_id == Batch.id)
-            .join(Campaign, Task.campaign_id == Campaign.id).outerjoin(issues, issues.c.image_id == Image.id)
+            .outerjoin(issues, issues.c.image_id == Image.id)
             .where(Task.assignee_id == user.id))
 
 
@@ -200,7 +198,7 @@ SORTS = {"filename": Image.filename, "batch": Batch.name, "updated": func.coales
 
 @router.get("/api/tasks")
 def list_tasks(step: str = "", state: str = "", batch: int = 0, q: str = "", sort: str = "filename", order: str = "asc",
-               page: int = 1, size: int = 50, user: User = Depends(current_user)):
+               page: int = 1, user: User = Depends(current_user)):
     """My tasks, filtered (step, state, batch, filename search), sorted and paginated; with the count per
     state (same filters but the state) and the batches I have tasks in."""
     with Session() as s:
@@ -217,7 +215,7 @@ def list_tasks(step: str = "", state: str = "", batch: int = 0, q: str = "", sor
         total = s.scalar(select(func.count()).select_from(base.subquery()))
         col = SORTS.get(sort, Image.filename)
         rows = s.execute(base.order_by(col.desc() if order == "desc" else col, Image.filename, Task.id)
-                         .limit(min(max(size, 1), PAGE)).offset((max(page, 1) - 1) * min(max(size, 1), PAGE))).all()
+                         .limit(PAGE).offset((max(page, 1) - 1) * PAGE)).all()
         batches = s.execute(select(Batch.id, Batch.name).join(Image, Image.batch_id == Batch.id).join(Task, Task.image_id == Image.id)
                             .where(Task.assignee_id == user.id).distinct().order_by(Batch.name)).all()
         return {"items": [task_json(*r) for r in rows], "total": total, "counts": counts,

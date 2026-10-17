@@ -22,8 +22,6 @@ function useHash() {
   return hash
 }
 
-const go = (path: string) => { window.location.hash = path }
-
 export default function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const hash = useHash()
@@ -43,12 +41,11 @@ export default function App() {
   const parts = hash.split('/').filter(Boolean)
   const n = (k: number) => (parts[k] ? Number(parts[k]) : undefined)
   // #/task/<task>[/<issue>]: my tasks from that one; #/annotate/<batch>[/<image>[/<issue>]]: a batch (staff)
-  if (parts[0] === 'task' && parts[1])
-    return <><Annotate key={hash} user={user} taskId={n(1)} issueId={n(2)} theme={user.theme} onToggleTheme={toggleTheme} /><DialogHost /></>
-  if (parts[0] === 'annotate' && parts[1] && isStaff(user))
-    return <><Annotate key={hash} user={user} batchId={n(1)} imageId={n(2)} issueId={n(3)} theme={user.theme} onToggleTheme={toggleTheme} /><DialogHost /></>
+  const annotate = parts[0] === 'task' && parts[1] ? { taskId: n(1), issueId: n(2) }
+    : parts[0] === 'annotate' && parts[1] && isStaff(user) ? { batchId: n(1), imageId: n(2), issueId: n(3) } : null
+  if (annotate) return <><Annotate key={hash} user={user} {...annotate} theme={user.theme} onToggleTheme={toggleTheme} /><DialogHost /></>
 
-  const logout = async () => { await api('/api/logout', { method: 'POST' }); setUser(null); go('/') }
+  const logout = async () => { await api('/api/logout', { method: 'POST' }); setUser(null); window.location.hash = '/' }
   const page = parts[0] === 'issues' || (isStaff(user) && ['campaigns', 'admin'].includes(parts[0])) ? parts[0] : 'tasks'
   const tab = (to: string, label: string) =>
     <a href={`#/${to === 'tasks' ? '' : to}`} className={page === to ? 'text-foreground' : 'hover:text-foreground'}>{label}</a>

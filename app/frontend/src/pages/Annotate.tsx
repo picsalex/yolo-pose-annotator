@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { type Ann, type EditorState, COLORS, Editor, ROOF_PROMPTS } from '@/editor/controller'
-import { type Issue, type QueueImage, type Task, type User, api, imageUrl, isStaff } from '@/lib/api'
+import { type Issue, type QueueImage, type Task, type User, api, isStaff } from '@/lib/api'
 import { loadModel } from '@/lib/visibility'
 import type { Theme } from '@/lib/theme'
 import { KEYPOINTS } from '@/lib/forklift'
@@ -25,7 +25,7 @@ function loadImage(id: number): Promise<HTMLImageElement> {
       img.decoding = 'async'
       img.onload = () => resolve(img)
       img.onerror = reject
-      img.src = imageUrl(id)
+      img.src = `/api/images/${id}/file`
     })
     imageCache.set(id, p)
     if (imageCache.size > 12) imageCache.delete(imageCache.keys().next().value!)
@@ -81,7 +81,7 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
   const [activeIssue, setActiveIssue] = useState<number | null>(null)
   const [draft, setDraft] = useState<{ x: number; y: number; text: string } | null>(null)   // a new issue being written
   const [help, setHelp] = useState(false)                           // the shortcuts popup
-  const [open, setOpen] = useState({ issues: true })                // side-panel sections
+  const [issuesOpen, setIssuesOpen] = useState(true)
   const loadedRef = useRef<number | null>(null)
 
   // the queue: my open tasks, from the one opened; or a batch's images, from imageId (else the first not approved)
@@ -108,8 +108,8 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
   useEffect(() => {
     const ed = new Editor(canvasRef.current!)
     ed.onChange = setState
-    ed.onPin = (id) => { setActiveIssue((a) => (a === id ? null : id)); setOpen((o) => ({ ...o, issues: true })) }
-    ed.onComment = (x, y) => { setDraft({ x, y, text: '' }); setActiveIssue(null); setOpen((o) => ({ ...o, issues: true })) }
+    ed.onPin = (id) => { setActiveIssue((a) => (a === id ? null : id)); setIssuesOpen(true) }
+    ed.onComment = (x, y) => { setDraft({ x, y, text: '' }); setActiveIssue(null); setIssuesOpen(true) }
     editorRef.current = ed
     loadModel().then((m) => { ed.model = m }).catch(() => {})    // without it, new points start visible
     ed.resize()
@@ -132,9 +132,8 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
           api<{ data: Ann | null }>(`/api/images/${current.id}/annotation`),
           api<Issue[]>(`/api/images/${current.id}/issues`),
         ])
-        while (!editorRef.current) await new Promise((r) => setTimeout(r, 20))
         if (cancelled) return
-        editorRef.current.load(img, ann.data)
+        editorRef.current!.load(img, ann.data)
         setIssues(iss)
         setActiveIssue(isStart(current) && issueId ? issueId : null)      // opened from the Issues page
         setDraft(null)
@@ -188,18 +187,17 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
       const ed = editorRef.current
       if (!ed || !current || loadedRef.current !== current.id) return
       fetch(`/api/images/${current.id}/annotation`, {
-        method: 'PUT', keepalive: true, credentials: 'same-origin',
+        method: 'PUT', keepalive: true,
         headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: ed.serialize() }),
       })
       if (current.task?.state === 'todo' && ed.edited())
-        fetch(`/api/tasks/${current.task.id}/start`, { method: 'POST', keepalive: true, credentials: 'same-origin' })
+        fetch(`/api/tasks/${current.task.id}/start`, { method: 'POST', keepalive: true })
     }
     window.addEventListener('pagehide', leave)
     window.addEventListener('hashchange', leave)
     return () => { window.removeEventListener('pagehide', leave); window.removeEventListener('hashchange', leave) }
   }, [current])
 
-  /** Leave the image (← / →): saved, the task left as it is. */
   /** The next image; past the last of the queue, my next 50 tasks (if any). */
   const forward = useCallback(async () => {
     if (!queue) return
@@ -210,6 +208,7 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
     if (items.length) { setQueue(items); setIndex(0) }
   }, [index, more, queue, tasks])
 
+  /** Leave the image (← / →): saved, the task left as it is. */
   const goTo = useCallback(async (next: number) => {
     if (!queue) return
     try { await save() } catch (e) { setError(`save failed: ${(e as Error).message}`); return }
@@ -291,7 +290,7 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
         case 'p': case 'P': ed.startHuman(); break
         case 'v': case 'V': ed.toggleVisibility(); break
         case 'b': case 'B': ed.resetBox(); break
-        case 'x': ed.toggleHidden(); break
+        case 'x': ed.setHidden(ed.selected, true); break
         case 'X': ed.showAll(); break
         case '0': ed.fitView(); break
         case 'Escape': ed.cancel(); break
@@ -330,14 +329,6 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
     null,
     { icon: Keyboard, label: 'Keyboard shortcuts (?)', active: help, run: () => setHelp(!help) },
   ]
-  const section = (key: keyof typeof open, title: string, body: React.ReactNode) => (
-    <section className="grid grid-cols-1 gap-2">
-      <button type="button" className="flex items-center gap-1 text-left font-medium" onClick={() => setOpen({ ...open, [key]: !open[key] })}>
-        <ChevronDown className={cn('size-4 transition-transform', !open[key] && '-rotate-90')} />{title}
-      </button>
-      {open[key] && body}
-    </section>
-  )
 
   return (
     <div className="flex h-screen flex-col">
@@ -408,7 +399,11 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
         </div>
         <aside className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-l p-3 text-sm">
           {state && <Layers state={state} ed={ed} />}
-          {section('issues', `Issues (${issues.filter((i) => !i.resolved).length} open)`, <>
+          <section className="grid grid-cols-1 gap-2">
+            <button type="button" className="flex items-center gap-1 text-left font-medium" onClick={() => setIssuesOpen(!issuesOpen)}>
+              <ChevronDown className={cn('size-4 transition-transform', !issuesOpen && '-rotate-90')} />Issues ({issues.filter((i) => !i.resolved).length} open)
+            </button>
+            {issuesOpen && <>
             {draft && (
               <div className="grid gap-2 rounded-md border border-violet-500 p-2">
                 <textarea autoFocus className={textarea} placeholder="What is the question?" value={draft.text}
@@ -436,7 +431,8 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
                 )}
               </div>
             ))}
-          </>)}
+            </>}
+          </section>
         </aside>
       </div>
     </div>
