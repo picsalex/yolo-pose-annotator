@@ -1,6 +1,6 @@
 import {
   ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, ImageOff, Keyboard, Loader2, MessageSquarePlus, MousePointer2,
-  Redo2, Save, Trash2, Truck, Undo2, UserRound, X,
+  Maximize, Redo2, Save, Trash2, Truck, Undo2, UserRound, X, ZoomIn, ZoomOut,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { ask, dialogOpen } from '@/components/dialog'
@@ -50,8 +50,8 @@ const SHORTCUTS: [string, [string, string][]][] = [
   ]],
   ['View', [
     ['Space', 'hold to pan'],
-    ['scroll', 'zoom'],
-    ['0', 'fit the image'],
+    ['scroll / pinch', 'zoom'],
+    ['+ / − / 0', 'zoom in / out / fit the image'],
     ['X / ⇧X', 'hide the selection / show all'],
   ]],
   ['Image', [
@@ -106,7 +106,7 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
 
   // editor
   useEffect(() => {
-    const ed = new Editor(canvasRef.current!)
+    const canvas = canvasRef.current!, ed = new Editor(canvas), wheel = (e: WheelEvent) => ed.wheel(e)
     ed.onChange = setState
     ed.onPin = (id) => { setActiveIssue((a) => (a === id ? null : id)); setIssuesOpen(true) }
     ed.onComment = (x, y) => { setDraft({ x, y, text: '' }); setActiveIssue(null); setIssuesOpen(true) }
@@ -114,8 +114,9 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
     loadModel().then((m) => { ed.model = m }).catch(() => {})    // without it, new points start visible
     ed.resize()
     const ro = new ResizeObserver(() => ed.resize())
-    ro.observe(canvasRef.current!)
-    return () => ro.disconnect()
+    ro.observe(canvas)
+    canvas.addEventListener('wheel', wheel, { passive: false })   // not passive (React's is): it may stop the page's zoom
+    return () => { ro.disconnect(); canvas.removeEventListener('wheel', wheel) }
   }, [])
 
   const current = queue?.[index]
@@ -282,7 +283,8 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
       if (mod && e.key.toLowerCase() === 'z') { e.preventDefault(); if (e.shiftKey) ed.redo(); else ed.undo(); return }
       if (mod && e.key.toLowerCase() === 's') { e.preventDefault(); saveNow(); return }
       if (mod && e.key.toLowerCase() === 'a') { e.preventDefault(); ed.selectAll(); return }
-      if (mod) return
+      if (mod && ['+', '=', '-', '0'].includes(e.key)) e.preventDefault()   // the image zooms, not the page
+      else if (mod) return
       switch (e.key) {
         case 'd': case 'D': ed.startDrag(); break
         case 'f': case 'F': ed.startForklift(); break
@@ -293,6 +295,8 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
         case 'x': ed.setHidden(ed.selected, true); break
         case 'X': ed.showAll(); break
         case '0': ed.fitView(); break
+        case '+': case '=': ed.zoom(1.25); break
+        case '-': ed.zoom(0.8); break
         case 'Escape': ed.cancel(); break
         case 'Delete': case 'Backspace': ed.deleteSelection(); break
         case 'Enter': e.preventDefault(); finish(); break
@@ -303,10 +307,12 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
     }
     const up = (e: KeyboardEvent) => { if (e.key === ' ') editorRef.current?.setSpace(false) }
     const blur = () => editorRef.current?.setSpace(false)          // Space released in another window
-    window.addEventListener('keydown', down)
-    window.addEventListener('keyup', up)
-    window.addEventListener('blur', blur)
-    return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur) }
+    // a pinch (ctrl + wheel; Safari: gesture events) never zooms the page around the studio
+    const pinch = (e: Event) => { if (!(e instanceof WheelEvent) || e.ctrlKey) e.preventDefault() }
+    const on: [string, EventListener, AddEventListenerOptions?][] = [['keydown', down as EventListener], ['keyup', up as EventListener],
+      ['blur', blur], ['wheel', pinch, { passive: false }], ['gesturestart', pinch], ['gesturechange', pinch]]
+    for (const [type, f, o] of on) window.addEventListener(type, f, o)
+    return () => { for (const [type, f] of on) window.removeEventListener(type, f) }
   }, [finish, goTo, help, index, saveNow])
 
   const ed = editorRef.current
@@ -324,6 +330,10 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
     { icon: MessageSquarePlus, label: 'Comment: pin an issue on the image (C)', active: mode === 'comment', run: () => ed?.startComment() },
     { icon: Undo2, label: 'Undo (⌘Z)', disabled: !state?.canUndo, run: () => ed?.undo() },
     { icon: Redo2, label: 'Redo (⇧⌘Z)', disabled: !state?.canRedo, run: () => ed?.redo() },
+    null,
+    { icon: ZoomIn, label: 'Zoom in (+)', run: () => ed?.zoom(1.25) },
+    { icon: ZoomOut, label: 'Zoom out (−)', run: () => ed?.zoom(0.8) },
+    { icon: Maximize, label: 'Fit the image (0)', run: () => ed?.fitView() },
     null,
     { icon: ImageOff, label: 'Background image: nothing to annotate (saved with an empty label file)', disabled: !current, run: markBackground },
     null,
@@ -372,7 +382,6 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
             onPointerMove={(e) => ed?.pointerMove(e.nativeEvent)}
             onPointerUp={() => ed?.pointerUp()}
             onPointerLeave={() => ed?.pointerLeave()}
-            onWheel={(e) => ed?.wheel(e.nativeEvent)}
             onContextMenu={(e) => e.preventDefault()}
           />
           {live?.comment && !prompt && (

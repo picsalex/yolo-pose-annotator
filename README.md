@@ -182,12 +182,12 @@ the back corners are the counterweight's, whatever the wheels.
 | X / Shift+X | hide the selection / show all |
 | ⌘A / Ctrl+A | select every shown forklift / person (⌘, Ctrl or Shift + click a side-panel row: add / remove it) |
 | Del | delete the selection |
-| 0 | fit the image |
 | ⌘Z / ⇧⌘Z | undo / redo |
 | Ctrl / Cmd + S | save, mark the image done |
 | Enter or → | save, next image (done if it holds an annotation) |
 | ← | previous image |
-| scroll, right-drag | zoom, pan |
+| scroll or pinch, right-drag | zoom the image (never the page), pan |
+| + / − / 0 (or ⌘ +, ⌘ −, ⌘ 0) | zoom in, out, fit the image (also in the toolbar) |
 
 ## Export format
 

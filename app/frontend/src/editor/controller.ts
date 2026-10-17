@@ -387,10 +387,15 @@ export class Editor {
     this.updateCursor()
   }
 
+  /** Scroll or trackpad pinch (a wheel event with ctrlKey): the image zooms, not the page. */
   wheel(e: WheelEvent) {
+    e.preventDefault()
     const r = this.canvas.getBoundingClientRect()
-    const sx = e.clientX - r.left, sy = e.clientY - r.top
-    const k = Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015))
+    this.zoom(Math.exp(-e.deltaY * (e.ctrlKey ? 0.01 : 0.0015)), e.clientX - r.left, e.clientY - r.top)
+  }
+
+  /** Zoom by k around the screen point (sx, sy): the cursor, or the canvas's centre. */
+  zoom(k: number, sx = this.canvas.clientWidth / 2, sy = this.canvas.clientHeight / 2) {
     const s = Math.min(Math.max(this.scale * k, 0.02), 40)
     this.ox = sx - ((sx - this.ox) * s) / this.scale
     this.oy = sy - ((sy - this.oy) * s) / this.scale
