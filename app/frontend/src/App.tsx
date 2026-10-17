@@ -5,6 +5,7 @@ import { ThemeToggle } from '@/components/theme-toggle'
 import { Button } from '@/components/ui/button'
 import { type User, api, isStaff } from '@/lib/api'
 import { applyTheme } from '@/lib/theme'
+import { cn } from '@/lib/utils'
 import Admin from '@/pages/Admin'
 import Annotate from '@/pages/Annotate'
 import Campaigns from '@/pages/Campaigns'
@@ -25,6 +26,14 @@ function useHash() {
 export default function App() {
   const [user, setUser] = useState<User | null | undefined>(undefined)
   const hash = useHash()
+  const [counts, setCounts] = useState({ tasks: 0, issues: 0 })     // the header's badges: my open tasks, open issues
+  useEffect(() => {
+    if (!user) return
+    const get = () => api<typeof counts>('/api/me/counts').then(setCounts).catch(() => {})
+    get()
+    const t = setInterval(get, 60_000)
+    return () => clearInterval(t)
+  }, [user?.id, hash])
   const signIn = (u: User) => { applyTheme(u.theme); setUser(u) }
   useEffect(() => { api<User>('/api/me').then(signIn).catch(() => setUser(null)) }, [])
 
@@ -47,15 +56,19 @@ export default function App() {
 
   const logout = async () => { await api('/api/logout', { method: 'POST' }); setUser(null); window.location.hash = '/' }
   const page = parts[0] === 'issues' || (isStaff(user) && ['campaigns', 'admin'].includes(parts[0])) ? parts[0] : 'tasks'
-  const tab = (to: string, label: string) =>
-    <a href={`#/${to === 'tasks' ? '' : to}`} className={page === to ? 'text-foreground' : 'hover:text-foreground'}>{label}</a>
+  const tab = (to: string, label: string, n = 0, what = '') => (
+    <a href={`#/${to === 'tasks' ? '' : to}`} title={n ? `${n} ${what}` : undefined}
+      className={cn('flex items-center gap-1.5', page === to ? 'text-foreground' : 'hover:text-foreground')}>
+      {label}{n > 0 && <span className="rounded-full bg-red-600 px-1.5 text-[11px] leading-[18px] font-medium text-white">{n}</span>}
+    </a>
+  )
   return (
     <div className="min-h-screen">
       <header className="border-b">
         <div className="mx-auto flex h-14 max-w-6xl items-center gap-6 px-6">
           <a href="#/" className="font-semibold tracking-tight">Studio</a>
           <nav className="flex gap-4 text-sm text-muted-foreground">
-            {tab('tasks', 'My tasks')}{tab('issues', 'Issues')}
+            {tab('tasks', 'My tasks', counts.tasks, 'open tasks')}{tab('issues', 'Issues', counts.issues, 'open issues')}
             {isStaff(user) && <>{tab('campaigns', 'Campaigns')}{tab('admin', 'Admin')}</>}
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm text-muted-foreground">

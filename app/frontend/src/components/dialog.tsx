@@ -13,7 +13,8 @@ interface Ask {
   message?: React.ReactNode
   confirm?: string                  // the confirm button (default OK)
   danger?: boolean                  // a red confirm button
-  input?: { placeholder?: string; type?: string; multiline?: boolean; match?: string }   // match: the text that must be typed
+  // match: the text that must be typed; minLength: the confirm button waits for that many characters
+  input?: { placeholder?: string; type?: string; multiline?: boolean; match?: string; minLength?: number; value?: string }   // value: to start with
 }
 type Shown = Ask & { resolve: (v: string | null) => void }
 
@@ -28,8 +29,8 @@ export const ask = (a: Ask) => new Promise<string | null>((resolve) => show({ ..
 export function DialogHost() {
   const [d, setD] = useState<Shown | null>(null)
   const [text, setText] = useState('')
-  useEffect(() => { show = (x) => { setText(''); setD(x) } }, [])
-  const ok = !d?.input || (d.input.match !== undefined ? text === d.input.match : text.trim() !== '')
+  useEffect(() => { show = (x) => { setText(x.input?.value ?? ''); setD(x) } }, [])
+  const ok = !d?.input || (d.input.match !== undefined ? text === d.input.match : text.trim() !== '' && text.length >= (d.input.minLength ?? 0))
   const close = (v: string | null) => { d?.resolve(v); setD(null) }
   useEffect(() => {
     shown = !!d

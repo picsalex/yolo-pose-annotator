@@ -72,17 +72,18 @@ docker compose exec app python -c "import sqlite3; sqlite3.connect('/data/db/stu
 
 Everyone has **My tasks** and **Issues**; managers and admins ("staff") also have
 **Campaigns** and **Admin**, see every issue, and can browse any batch (Admin, **Open**).
+The header's red badges count your open tasks and the open issues you can see.
 
 ## Workflow
 
 1. **Batches:** on the Admin page, choose a `.zip` of images (any folders inside;
    a single top folder is dropped) and a batch name: a new one, or an existing
    one to add the images to (files already there are kept). It is unpacked into
-   `images/<batch-name>/`. An admin can delete a batch (its images,
-   annotations, issues and campaigns): type its name to confirm.
+   `images/<batch-name>/`. The pencil renames a batch (and its folder). An admin can
+   delete a batch (its images, annotations, issues and campaigns): type its name to confirm.
 2. **Campaign:** on the Campaigns page, name it, pick a batch (one campaign in
    progress per batch) and the people of each step, annotation and review (the
-   same people can be in both). Starting it creates a task per image, shared
+   same people can be in both; each step's list searches by name, a page at a time). Starting it creates a task per image, shared
    between the annotation step's people in contiguous runs of filenames.
    - An image submitted by its annotator gets a review task, for someone of the
      review step other than its annotator (it waits when nobody else can take it).

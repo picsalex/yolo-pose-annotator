@@ -3,6 +3,7 @@
 import { Play, RefreshCw, Trash2, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { ask } from '@/components/dialog'
+import { PeopleSelect } from '@/components/people-select'
 import { when } from '@/components/issue-thread'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -53,15 +54,7 @@ function PeoplePicker({ users, value, onChange }: { users: UserRow[]; value: Mem
       {(['annotate', 'review'] as Step[]).map((step) => (
         <div key={step} className="grid content-start gap-2">
           <Label>{STEP_TITLE[step]} ({value[step].length})</Label>
-          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-            {users.map((u) => (
-              <Label key={u.id} className="font-normal">
-                <input type="checkbox" className="accent-primary" checked={value[step].includes(u.id)}
-                  onChange={(e) => onChange({ ...value, [step]: e.target.checked ? [...value[step], u.id] : value[step].filter((x) => x !== u.id) })} />
-                {u.username}
-              </Label>
-            ))}
-          </div>
+          <PeopleSelect users={users} value={value[step]} onChange={(ids) => onChange({ ...value, [step]: ids })} />
         </div>
       ))}
     </div>

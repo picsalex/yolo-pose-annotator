@@ -1,4 +1,4 @@
-import { Download, Trash2, Upload, UserPlus } from 'lucide-react'
+import { Download, Pencil, Trash2, Upload, UserPlus } from 'lucide-react'
 import { ask } from '@/components/dialog'
 import { useCallback, useEffect, useState } from 'react'
 import { Badge } from '@/components/ui/badge'
@@ -91,6 +91,10 @@ function BatchesCard({ user, batches, run }: { user: User; batches: BatchRow[]; 
               {b.campaign ? <Badge variant="secondary">campaign: {b.campaign}</Badge> : <Badge variant="outline">no campaign running</Badge>}
               <div className="ml-auto flex items-center gap-2">
                 <Button size="sm" variant="outline" onClick={() => { window.location.hash = `/annotate/${b.id}` }} title="Browse and correct its images">Open</Button>
+                <Button size="icon" variant="ghost" title="Rename the batch" onClick={async () => {
+                  const name = (await ask({ title: `Rename ${b.name}`, confirm: 'Rename', input: { value: b.name } }))?.trim()
+                  if (name && name !== b.name) run(() => api(`/api/batches/${b.id}`, { method: 'PATCH', body: { name } }), `Renamed ${b.name} to ${name}.`)
+                }}><Pencil /></Button>
                 {user.role === 'admin' && (
                   <Button size="icon" variant="ghost" title="Delete the batch" onClick={async () => {
                     if (await ask({ title: `Delete ${b.name}`, danger: true, confirm: 'Delete', input: { match: b.name, placeholder: b.name },
@@ -140,11 +144,11 @@ function UsersCard({ user, users, run }: { user: User; users: UserRow[]; run: Ru
       <CardContent className="grid gap-6">
         <form onSubmit={create} className="flex flex-wrap items-end gap-3">
           <div className="grid gap-2"><Label>Username</Label><Input value={username} onChange={(e) => setUsername(e.target.value)} className="w-44" /></div>
-          <div className="grid gap-2"><Label>Password</Label><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-44" /></div>
+          <div className="grid gap-2"><Label>Password</Label><Input type="password" placeholder="8 characters or more" value={password} onChange={(e) => setPassword(e.target.value)} className="w-44" /></div>
           <div className="grid gap-2"><Label>Role</Label>
             <select className={select} value={role} onChange={(e) => setRole(e.target.value as Role)}>{roles.map((r) => <option key={r}>{r}</option>)}</select>
           </div>
-          <Button type="submit" disabled={!username || !password}><UserPlus />Create</Button>
+          <Button type="submit" disabled={!username.trim() || password.length < 8}><UserPlus />Create</Button>
         </form>
         <Table>
           <TableHeader>
@@ -167,7 +171,8 @@ function UsersCard({ user, users, run }: { user: User; users: UserRow[]; run: Ru
                 <TableCell>{u.tasks.todo} / {u.tasks.done}</TableCell>
                 <TableCell className="text-right">
                   <Button variant="ghost" size="sm" disabled={locked} onClick={async () => {
-                    const p = await ask({ title: `New password for ${u.username}`, confirm: 'Change', input: { type: 'password' } })
+                    const p = await ask({ title: `New password for ${u.username}`, confirm: 'Change', input: { type: 'password', minLength: 8 },
+                      message: 'At least 8 characters. Their open sessions end.' })
                     if (p) run(() => api(`/api/users/${u.id}/password`, { body: { password: p } }), `Password changed for ${u.username}.`)
                   }}>Reset password</Button>
                   <Button variant="ghost" size="icon" title="Delete" disabled={locked || u.id === user.id} onClick={async () => {

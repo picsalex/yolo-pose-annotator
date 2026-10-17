@@ -124,6 +124,17 @@ def me(user: User = Depends(current_user)):
     return user_json(user)
 
 
+@app.get("/api/me/counts")
+def my_counts(user: User = Depends(current_user)):
+    """For the header: my open tasks, and the open issues I can see (staff: all; others: on my tasks' images)."""
+    with Session() as s:
+        issues = select(func.count()).select_from(Issue).where(Issue.resolved.is_(False))
+        if not is_staff(user):
+            issues = issues.where(Issue.image_id.in_(select(Task.image_id).where(Task.assignee_id == user.id)))
+        return {"tasks": s.scalar(select(func.count()).select_from(Task).where(Task.assignee_id == user.id, Task.status == "todo")),
+                "issues": s.scalar(issues)}
+
+
 class Prefs(BaseModel):
     theme: str
 
@@ -292,12 +303,18 @@ def _unpack(zip_path: Path, folder: Path) -> int:
     return written
 
 
-@app.put("/api/batches/upload")
-async def upload(request: Request, name: str, _: User = Depends(staff_user)):
-    """A zip of images (the request body) into batch `name`, new or existing."""
+def _batch_name(name: str) -> str:
+    """A batch name is its folder's name: not hidden, no path."""
     name = name.strip()
     if not name or name.startswith(".") or any(c in name for c in '/\\:'):
         raise HTTPException(400, "invalid batch name")
+    return name
+
+
+@app.put("/api/batches/upload")
+async def upload(request: Request, name: str, _: User = Depends(staff_user)):
+    """A zip of images (the request body) into batch `name`, new or existing."""
+    name = _batch_name(name)
     tmp, size = _tmp(), 0
     try:
         with tmp.open("wb") as f:
@@ -311,6 +328,28 @@ async def upload(request: Request, name: str, _: User = Depends(staff_user)):
     finally:
         tmp.unlink(missing_ok=True)
     return {"added": await run_in_threadpool(scan, name)}
+
+
+class BatchName(BaseModel):
+    name: str
+
+
+@app.patch("/api/batches/{bid}")
+def rename_batch(bid: int, body: BatchName, _: User = Depends(staff_user)):
+    """Its name and its folder."""
+    name = _batch_name(body.name)
+    with Session() as s:
+        b = s.get(Batch, bid)
+        if not b:
+            raise HTTPException(404)
+        if name != b.name:
+            if s.scalar(select(Batch.id).where(Batch.name == name)) or (IMAGES_DIR / name).exists():
+                raise HTTPException(409, "another batch has this name")
+            old, b.name = b.name, name
+            s.flush()
+            (IMAGES_DIR / old).rename(IMAGES_DIR / name)
+            s.commit()
+    return {"ok": True}
 
 
 @app.delete("/api/batches/{bid}")
