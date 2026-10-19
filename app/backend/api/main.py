@@ -405,6 +405,20 @@ def _path(s, img: Image) -> Path:
     return IMAGES_DIR / s.get(Batch, img.batch_id).name / img.filename
 
 
+@app.delete("/api/images/{iid}")
+def delete_image(iid: int, _: User = Depends(staff_user)):
+    """The image, and with it (the database cascades) its annotation, issues and tasks; then its file."""
+    with Session() as s:
+        img = s.get(Image, iid)
+        if not img:
+            raise HTTPException(404)
+        path = _path(s, img)
+        s.delete(img)
+        s.commit()
+    path.unlink(missing_ok=True)
+    return {"ok": True}
+
+
 @app.get("/api/images/{iid}/file")
 def image_file(iid: int, user: User = Depends(current_user)):
     with Session() as s:

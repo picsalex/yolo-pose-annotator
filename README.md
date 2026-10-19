@@ -100,7 +100,9 @@ The header's red badges count your open tasks and the open issues you can see.
 3. **My tasks:** the signed-in user's tasks, one row per image, in two tabs:
    **Annotate** (blue) and **Review** (orange), each with its open count (it opens on
    Review when reviews wait). Filter by state (to do, in progress, to fix (annotate
-   only), done), batch and filename, sort by a column, 50 per page. **Continue** or a
+   only), done), batch and filename, sort by a column, 50 per page. Staff have a
+   **⋯** menu per row: **Delete the image** (after a confirmation: its file,
+   annotation, issues and tasks go, for everyone). **Continue** or a
    row opens the editor on that step only ("Annotating" / "Reviewing" in the
    header, in the step's colour): it goes through that step's open tasks, 50 at a
    time (the next 50 load past the last). **↵** saves the image and submits it (a review:

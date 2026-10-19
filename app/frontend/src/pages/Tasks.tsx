@@ -2,7 +2,9 @@
 // filename, sorted by a column header, paginated. A row opens the editor on that task.
 import { ArrowDown, ArrowUp, ChevronLeft, ChevronRight, MessageSquare } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
+import { ask } from '@/components/dialog'
 import { when } from '@/components/issue-thread'
+import { Menu } from '@/components/menu'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -15,7 +17,7 @@ const SIZE = 50                                       // per page (the API's)
 const STATES: [TaskState | '', string][] = [['', 'All'], ['todo', 'To do'], ['progress', 'In progress'], ['fix', 'To fix'], ['done', 'Done']]
 const label = (t: Task) => (t.state === 'done' ? t.result ?? 'submitted' : STATES.find(([s]) => s === t.state)![1].toLowerCase())
 
-export default function Tasks() {
+export default function Tasks({ staff }: { staff: boolean }) {
   const [f, setF] = useState({ step: 'review' as Step, state: '', batch: 0, q: '', sort: 'filename', order: 'asc', page: 1 })
   const [data, setData] = useState<TaskList | null>(null)
   const first = useRef(true)
@@ -79,7 +81,7 @@ export default function Tasks() {
         </div>
         <Table>
           <TableHeader>
-            <TableRow>{head('filename', 'Image')}{head('batch', 'Batch')}<TableHead>State</TableHead><TableHead>Issues</TableHead>{head('updated', 'Updated')}</TableRow>
+            <TableRow>{head('filename', 'Image')}{head('batch', 'Batch')}<TableHead>State</TableHead><TableHead>Issues</TableHead>{head('updated', 'Updated')}{staff && <TableHead />}</TableRow>
           </TableHeader>
           <TableBody>
             {data?.items.map((t) => (
@@ -92,6 +94,12 @@ export default function Tasks() {
                 </TableCell>
                 <TableCell>{t.open_issues > 0 && <span className="inline-flex items-center gap-1 text-[#7D24FF]"><MessageSquare className="size-3.5" />{t.open_issues}</span>}</TableCell>
                 <TableCell className="text-muted-foreground">{t.updated_at ? when(t.updated_at) : ''}</TableCell>
+                {staff && <TableCell className="w-10"><Menu items={[{ label: 'Delete the image', danger: true, run: async () => {
+                  if (await ask({ title: `Delete ${t.filename}`, danger: true, confirm: 'Delete',
+                    message: 'The image goes with its file, annotation, issues and tasks (annotate and review), for everyone.' }) === null) return
+                  await api(`/api/images/${t.image_id}`, { method: 'DELETE' })
+                  setF({ ...f })
+                } }]} /></TableCell>}
               </TableRow>
             ))}
           </TableBody>
