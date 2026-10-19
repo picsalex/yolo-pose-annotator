@@ -10,7 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Kbd } from '@/components/ui/kbd'
 import { type Ann, type EditorState, COLORS, Editor, ROOF_PROMPTS } from '@/editor/controller'
-import { type Issue, type QueueImage, type Task, type User, api, isStaff } from '@/lib/api'
+import { type Issue, type QueueImage, STEP, type Task, type User, api, isStaff } from '@/lib/api'
 import { loadModel } from '@/lib/visibility'
 import type { Theme } from '@/lib/theme'
 import { KEYPOINTS } from '@/lib/forklift'
@@ -81,7 +81,7 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
   const [activeIssue, setActiveIssue] = useState<number | null>(null)
   const [draft, setDraft] = useState<{ x: number; y: number; text: string } | null>(null)   // a new issue being written
   const [help, setHelp] = useState(false)                           // the shortcuts popup
-  const [issuesOpen, setIssuesOpen] = useState(true)
+  const [tab, setTab] = useState<'shapes' | 'issues'>(issueId ? 'issues' : 'shapes')
   const loadedRef = useRef<number | null>(null)
 
   // the queue: my open tasks, from the one opened; or a batch's images, from imageId (else the first not approved)
@@ -94,7 +94,7 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
   }, [])
   useEffect(() => {
     const load = taskId
-      ? tasks(`task=${taskId}`).then((items) => ({ title: 'My tasks', items }))
+      ? tasks(`task=${taskId}`).then((items) => ({ title: '', items }))   // tasks: the step's pill says it
       : api<{ batch: string; images: QueueImage[] }>(`/api/batches/${batchId}/images`).then(({ batch, images }) => ({ title: batch, items: images as Item[] }))
     load.then(({ title, items }) => {
       setTitle(title)
@@ -108,8 +108,8 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
   useEffect(() => {
     const canvas = canvasRef.current!, ed = new Editor(canvas), wheel = (e: WheelEvent) => ed.wheel(e)
     ed.onChange = setState
-    ed.onPin = (id) => { setActiveIssue((a) => (a === id ? null : id)); setIssuesOpen(true) }
-    ed.onComment = (x, y) => { setDraft({ x, y, text: '' }); setActiveIssue(null); setIssuesOpen(true) }
+    ed.onPin = (id) => { setActiveIssue((a) => (a === id ? null : id)); setTab('issues') }
+    ed.onComment = (x, y) => { setDraft({ x, y, text: '' }); setActiveIssue(null); setTab('issues') }
     editorRef.current = ed
     loadModel().then((m) => { ed.model = m }).catch(() => {})    // without it, new points start visible
     ed.resize()
@@ -347,14 +347,15 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
           onClick={async () => { await save().catch(() => {}); window.location.hash = taskId ? '/' : '/admin' }}>
           <ArrowLeft />
         </Button>
-        <span className="font-medium">{title}</span>
+        {task ? <span className="rounded px-2 py-0.5 text-xs font-semibold text-white" style={{ background: STEP[task.step].color }}>{STEP[task.step].doing}</span>
+          : <span className="font-medium">{title}</span>}
         {current && <span className="truncate text-sm text-muted-foreground">{task ? `${task.batch} / ` : ''}{current.filename}</span>}
         {task ? <Badge variant={task.state === 'done' ? 'success' : task.state === 'fix' ? 'destructive' : 'outline'}>
-          {task.step} · {task.result ?? STATES[task.state]}</Badge>
+          {task.result ?? STATES[task.state]}</Badge>
           : current && <Badge variant={current.status === 'approved' ? 'success' : 'outline'}>{current.status}</Badge>}
         <span className="text-sm text-muted-foreground">{queue ? `${index + 1} / ${queue.length} · ${left} ${taskId ? 'open' : 'not approved'}` : ''}</span>
         {busy && <span className="flex items-center gap-1 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />{busy}</span>}
-        {flash && <span className="flex items-center gap-1 text-sm text-emerald-500"><Check className="size-4" />{flash}</span>}
+        {flash && <Badge variant="success"><Check />{flash}</Badge>}
         {error && <span className="truncate text-sm text-destructive">{error}</span>}
         <div className="ml-auto flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={saveNow} disabled={!current} title="Save">
@@ -407,14 +408,19 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
           {help && <ShortcutsPopup onClose={() => setHelp(false)} />}
         </div>
         <aside className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-l p-3 text-sm">
-          {state && <Layers state={state} ed={ed} />}
-          <section className="grid grid-cols-1 gap-2">
-            <button type="button" className="flex items-center gap-1 text-left font-medium" onClick={() => setIssuesOpen(!issuesOpen)}>
-              <ChevronDown className={cn('size-4 transition-transform', !issuesOpen && '-rotate-90')} />Issues ({issues.filter((i) => !i.resolved).length} open)
-            </button>
-            {issuesOpen && <>
+          <div className="flex items-center border-b">
+            {([['shapes', 'Shapes', state ? state.forklifts.length + state.humans.length : 0], ['issues', 'Issues', issues.filter((i) => !i.resolved).length]] as const).map(([k, title, n]) => (
+              <button key={k} type="button" onClick={() => setTab(k)}
+                className={cn('-mb-px flex items-center gap-1.5 border-b-2 px-3 pb-2 font-medium', tab === k ? 'border-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}>
+                {title}<span className="font-normal text-muted-foreground">{n}</span>
+              </button>
+            ))}
+          </div>
+          {tab === 'shapes' && state && <Layers state={state} ed={ed} />}
+          {tab === 'issues' && <section className="grid grid-cols-1 gap-2">
+            {!issues.length && !draft && <p className="text-muted-foreground">No issues. Pin one with the comment tool (C).</p>}
             {draft && (
-              <div className="grid gap-2 rounded-md border border-violet-500 p-2">
+              <div className="grid gap-2 rounded-md border border-[#7D24FF] p-2">
                 <textarea autoFocus className={textarea} placeholder="What is the question?" value={draft.text}
                   onChange={(e) => setDraft({ ...draft, text: e.target.value })} />
                 <div className="flex gap-2">
@@ -424,11 +430,11 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
               </div>
             )}
             {issues.map((i, k) => (
-              <div key={i.id} className={cn('rounded-md border', activeIssue === i.id && 'border-violet-500')}>
+              <div key={i.id} className={cn('rounded-md border', activeIssue === i.id && 'border-[#7D24FF]')}>
                 <button type="button" className="flex w-full items-start gap-2 px-2 py-1.5 text-left hover:bg-accent/60"
                   onClick={() => setActiveIssue(activeIssue === i.id ? null : i.id)}>
                   <span className={cn('flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold text-white',
-                    i.resolved ? 'bg-slate-500' : 'bg-violet-500')}>{k + 1}</span>
+                    i.resolved ? 'bg-[#9E9E9E]' : 'bg-[#7D24FF]')}>{k + 1}</span>
                   {activeIssue === i.id
                     ? <span className="text-muted-foreground">{i.resolved ? 'resolved' : 'open'}</span>
                     : <span className="min-w-0 flex-1 truncate">{i.messages[0].text}</span>}
@@ -440,8 +446,7 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
                 )}
               </div>
             ))}
-            </>}
-          </section>
+          </section>}
         </aside>
       </div>
     </div>
@@ -468,13 +473,13 @@ function ShortcutsPopup({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
-        <div className="border-t pt-3 text-xs text-muted-foreground">Points: <span className="text-emerald-500">green</span> visible, grey hidden (exported as 0 0 0), white ring = roof corner. Forklift: 0-3 roof corners, 4-7 bottom corners on the truck (under 0-3: where its bottom edge turns the corner, not on a wheel or fork). <span style={{ color: COLORS.forklift }}>Pink</span>: a forklift's box, dashed while it follows the points; <span style={{ color: COLORS.person }}>cyan</span>: a person's. <span className="text-violet-500">Violet</span> pins: open issues (a resolved one shows, grey, only while opened in the side panel). People: H head, W waist, L left foot, R right foot (the person's own left / right).</div>
+        <div className="border-t pt-3 text-xs text-muted-foreground">Points: <span style={{ color: COLORS.visible }}>green</span> visible, grey hidden (exported as 0 0 0), white ring = roof corner. Forklift: 0-3 roof corners, 4-7 bottom corners on the truck (under 0-3: where its bottom edge turns the corner, not on a wheel or fork). <span style={{ color: COLORS.forklift }}>Pink</span>: a forklift's box, dashed while it follows the points; <span style={{ color: COLORS.person }}>cyan</span>: a person's. <span style={{ color: COLORS.issue }}>Violet</span> pins: open issues (a resolved one shows, grey, only while opened in the side panel). People: H head, W waist, L left foot, R right foot (the person's own left / right).</div>
       </div>
     </div>
   )
 }
 
-/** The forklifts and people, Photoshop-style: a group per class (eye, fold, count) and a compact row per
+/** The shapes (forklifts and people), Photoshop-style: a group per class (eye, fold, count) and a compact row per
  * instance (eye, class colour, name, visible points; delete on hover). A row click selects (⌘ / ⇧: adds
  * or removes), hovering highlights it on the image. */
 function Layers({ state, ed }: { state: EditorState; ed: Editor | null }) {
@@ -493,12 +498,9 @@ function Layers({ state, ed }: { state: EditorState; ed: Editor | null }) {
   const stripe = (color: string) => <span className="h-full w-1 shrink-0" style={{ background: color }} />
   return (
     <section className="grid grid-cols-1 gap-2">
-      <div className="flex items-center justify-between">
-        <h3 className="font-medium">Layers <span className="font-normal text-muted-foreground">{all.length}</span></h3>
-        {eye(all.length > 0 && all.every((a) => a.hidden), all.map((a) => a.id), 'Show / hide everything (⇧X: show all)')}
-      </div>
-      <div className="divide-y overflow-hidden rounded-md border">
-        {groups.flatMap((g) => {
+      {!all.length && <p className="text-muted-foreground">No shapes yet. Draw a forklift (F) or a person (P).</p>}
+      <div className={cn('divide-y overflow-hidden rounded-md border', !all.length && 'hidden')}>
+        {groups.filter((g) => g.items.length).flatMap((g) => {
           const ids = g.items.map((it) => it.id)
           return [
             <div key={g.key} className="flex h-8 items-center bg-muted/40">

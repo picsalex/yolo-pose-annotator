@@ -193,14 +193,14 @@ def _mine(user: User):
 
 
 PAGE = 50                         # tasks per page of the list, and per editor queue
-SORTS = {"filename": Image.filename, "batch": Batch.name, "updated": func.coalesce(Task.done_at, Task.started_at), "step": Task.step}
+SORTS = {"filename": Image.filename, "batch": Batch.name, "updated": func.coalesce(Task.done_at, Task.started_at)}
 
 
 @router.get("/api/tasks")
 def list_tasks(step: str = "", state: str = "", batch: int = 0, q: str = "", sort: str = "filename", order: str = "asc",
                page: int = 1, user: User = Depends(current_user)):
     """My tasks, filtered (step, state, batch, filename search), sorted and paginated; with the count per
-    state (same filters but the state) and the batches I have tasks in."""
+    state (same filters but the state), my open tasks per step (the tabs) and the batches I have tasks in."""
     with Session() as s:
         base = _mine(user)
         if step in STEPS:
@@ -218,16 +218,21 @@ def list_tasks(step: str = "", state: str = "", batch: int = 0, q: str = "", sor
                          .limit(PAGE).offset((max(page, 1) - 1) * PAGE)).all()
         batches = s.execute(select(Batch.id, Batch.name).join(Image, Image.batch_id == Batch.id).join(Task, Task.image_id == Image.id)
                             .where(Task.assignee_id == user.id).distinct().order_by(Batch.name)).all()
+        open_ = dict(s.execute(select(Task.step, func.count()).where(Task.assignee_id == user.id, Task.status == "todo")
+                               .group_by(Task.step)).all())
         return {"items": [task_json(*r) for r in rows], "total": total, "counts": counts,
+                "open": {step: open_.get(step, 0) for step in STEPS},
                 "batches": [{"id": i, "name": n} for i, n in batches]}
 
 
 @router.get("/api/tasks/queue")
 def task_queue(task: int = 0, after: int = 0, user: User = Depends(current_user)):
-    """What the editor goes through, PAGE tasks at a time: my open tasks (by batch and filename) from task
-    `task` (included), or the next ones after task `after`; more: whether others follow."""
+    """What the editor goes through, PAGE tasks at a time: my open tasks of one step (that of task `task`,
+    or `after`; by batch and filename) from task `task` (included), or the next ones after task `after`;
+    more: whether others follow."""
     with Session() as s:
-        rows = s.execute(_mine(user).where((Task.status == "todo") | Task.id.in_([task, after]))
+        step = s.scalar(select(Task.step).where(Task.id == (task or after), Task.assignee_id == user.id))
+        rows = s.execute(_mine(user).where((Task.status == "todo") | Task.id.in_([task, after]), Task.step == step)
                          .order_by(Batch.name, Image.filename, Task.step)).all()
         ids = [r[0].id for r in rows]
         start = ids.index(task) if task in ids else ids.index(after) + 1 if after in ids else 0

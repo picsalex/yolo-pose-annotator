@@ -97,10 +97,13 @@ The header's red badges count your open tasks and the open issues you can see.
    - The campaign shows its progress (annotated, approved, sent back) and, per
      person, their tasks to do and done in each step. Deleting it removes its
      tasks; the annotations stay on the images.
-3. **My tasks:** every task of the signed-in user, one row per image and step:
-   filter by state (to do, in progress, to fix, done), step, batch and filename,
-   sort by a column, 50 per page. **Continue** or a row opens the editor, which
-   goes through the open tasks, 50 at a time (the next 50 load past the last). **↵** saves the image and submits it (a review:
+3. **My tasks:** the signed-in user's tasks, one row per image, in two tabs:
+   **Annotate** (blue) and **Review** (orange), each with its open count (it opens on
+   Review when reviews wait). Filter by state (to do, in progress, to fix (annotate
+   only), done), batch and filename, sort by a column, 50 per page. **Continue** or a
+   row opens the editor on that step only ("Annotating" / "Reviewing" in the
+   header, in the step's colour): it goes through that step's open tasks, 50 at a
+   time (the next 50 load past the last). **↵** saves the image and submits it (a review:
    approves it; **Reject** asks for the comment; an approved review can be taken
    back with **Cancel approval**), then opens the next; **← / →**
    move between images without submitting; **Save** (⌘S) only saves.
@@ -112,10 +115,10 @@ The header's red badges count your open tasks and the open issues you can see.
    button, which lists every shortcut (also **?**). With the select tool a click
    selects a forklift / person and dragging it moves it whole; a drag on empty
    space selects every box it touches (move, hide or delete them together); hold **Space** to
-   pan with the hand. The side panel lists the **layers**, Photoshop-style: a
-   group per class (forklifts, people) with an eye, a count and a fold, then a
+   pan with the hand. The side panel has two tabs. **Shapes**, Photoshop-style: a
+   group per class present (forklifts, people) with an eye, a count and a fold, then a
    compact row per object (eye, class colour, name, visible keypoints; delete on
-   hover); a row click selects it (⌘ / Ctrl / Shift: adds or removes). Below,
+   hover); a row click selects it (⌘ / Ctrl / Shift: adds or removes). **Issues**:
    the image's issues. Confirmations (background image, reject, deletions) open
    in the app, like the shortcuts: ↵ confirms, Esc cancels.
 4. **Issues:** the **Comment** tool (C) pins a question on a spot of the image.

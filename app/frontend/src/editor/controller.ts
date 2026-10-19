@@ -25,8 +25,8 @@ const PERSON_EDGES = [[0, 1], [1, 2], [1, 3]]
 // a person drawn by hand starts with its keypoints here, hidden until dragged into place
 const PERSON_TEMPLATE = [[0.5, 0.07], [0.5, 0.53], [0.62, 0.98], [0.38, 0.98]]
 /** Each class's colour: its boxes, a person's keypoints, the layers panel. */
-export const COLORS = { forklift: '#FF64DA', person: '#00FFFF' }
-const LINES = '#e5e7eb'                            // a forklift's roof outline, a person's skeleton
+export const COLORS = { forklift: '#FF64DA', person: '#00FFFF', visible: '#00F344', issue: '#7D24FF' }   // the brand palette
+const LINES = '#F3F3F3'                            // a forklift's roof outline, a person's skeleton
 const HIT_RADIUS = 9
 // the box handles: the box sides each one moves (x: 0 left / 2 right, y: 1 top / 3 bottom, -1: none)
 const CORNERS = [[0, 1], [2, 1], [2, 3], [0, 3]], EDGES = [[-1, 1], [2, -1], [-1, 3], [0, -1]]
@@ -520,13 +520,13 @@ export class Editor {
     for (const h of this.ann.humans) if (!this.hidden.has(h.id)) this.drawHuman(h, focus)
     for (const f of this.ann.forklifts) if (!this.hidden.has(f.id)) this.drawForklift(f, focus)
     for (const p of this.pins) this.drawPin(p)
-    for (const [b, color, dash] of [[this.marquee, '#9ca3af', [4, 3]], [this.newBox, COLORS.person, []]] as const) {
+    for (const [b, color, dash] of [[this.marquee, '#CCCCCC', [4, 3]], [this.newBox, COLORS.person, []]] as const) {
       if (b) this.path([[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]], true, color, 1.5, [...dash])
     }
 
     if (this.mode === 'roof') {
-      this.path([...this.pendingRoof, this.cursor], false, '#22c55e', 1.5, [4, 4])
-      this.pendingRoof.forEach(([x, y], i) => this.dot(x, y, '#22c55e', true, String(i)))
+      this.path([...this.pendingRoof, this.cursor], false, COLORS.visible, 1.5, [4, 4])
+      this.pendingRoof.forEach(([x, y], i) => this.dot(x, y, COLORS.visible, true, String(i)))
     }
     if (this.mode === 'roof' || this.drag) this.drawLoupe()
   }
@@ -562,7 +562,7 @@ export class Editor {
     c.fillRect(lx, ly, size, size)
     c.imageSmoothingEnabled = false
     c.drawImage(this.img!, this.cursor[0] - half, this.cursor[1] - half, 2 * half, 2 * half, lx, ly, size, size)
-    c.strokeStyle = 'rgba(34,197,94,0.9)'
+    c.strokeStyle = COLORS.visible
     c.lineWidth = 1
     c.beginPath()
     c.moveTo(lx + size / 2, ly); c.lineTo(lx + size / 2, ly + size)
@@ -595,7 +595,7 @@ export class Editor {
   /** An issue pin: a numbered disc (violet open, grey resolved), larger while its issue is open in the panel. */
   private drawPin(p: Pin) {
     const r = p.id === this.activePin ? PIN_RADIUS + 2 : PIN_RADIUS
-    this.dot(p.x, p.y, p.resolved ? '#64748b' : '#8b5cf6', true, undefined, r)
+    this.dot(p.x, p.y, p.resolved ? '#9E9E9E' : COLORS.issue, true, undefined, r)
     const [px, py] = this.toScreen(p.x, p.y), c = this.ctx
     c.font = '700 10px ui-sans-serif, system-ui'
     c.textAlign = 'center'
@@ -641,12 +641,12 @@ export class Editor {
         this.path([kp[a], kp[b]], false, color, 1.6, hidden ? [4, 4] : [])
       })
       outline([0, 1, 2, 3], LINES)
-      outline([4, 5, 6, 7], '#94a3b8')
-      for (let i = 0; i < 4; i++) this.path([kp[i], kp[i + 4]], false, 'rgba(229,231,235,0.6)', 1, [4, 4])
+      outline([4, 5, 6, 7], '#9E9E9E')
+      for (let i = 0; i < 4; i++) this.path([kp[i], kp[i + 4]], false, 'rgba(243,243,243,0.6)', 1, [4, 4])
     }
     kp.forEach(([x, y], i) => {
       const hovered = this.hover?.kind === 'fk' && this.hover.id === f.id && this.hover.i === i
-      this.dot(x, y, f.vis[i] !== false ? '#22c55e' : 'rgba(148,163,184,0.75)', i < 4, String(i), hovered ? 7 : 5)
+      this.dot(x, y, f.vis[i] !== false ? COLORS.visible : 'rgba(158,158,158,0.75)', i < 4, String(i), hovered ? 7 : 5)
     })
     c.globalAlpha = 1
   }
@@ -670,7 +670,7 @@ export class Editor {
     h.kpts.forEach(([x, y, v], i) => {
       if (!v && !selected) return
       const hovered = this.hover?.kind === 'hu' && this.hover.id === h.id && this.hover.i === i
-      this.dot(x, y, v ? COLORS.person : 'rgba(148,163,184,0.6)', false, PERSON_LABELS[i], hovered ? 6.5 : 4.5)
+      this.dot(x, y, v ? COLORS.person : 'rgba(158,158,158,0.6)', false, PERSON_LABELS[i], hovered ? 6.5 : 4.5)
     })
     c.globalAlpha = 1
   }

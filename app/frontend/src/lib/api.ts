@@ -8,13 +8,17 @@ export interface BatchRow {
   campaign: string | null                            // the name of its campaign in progress
 }
 export type Step = 'annotate' | 'review'
+/** Each step's name and colour (the My tasks tabs, the editor's header). */
+export const STEP = { annotate: { title: 'Annotate', doing: 'Annotating', color: '#042AFF' }, review: { title: 'Review', doing: 'Reviewing', color: '#FC6D2F' } }
 export type TaskState = 'todo' | 'progress' | 'fix' | 'done'
 export interface Task {
   id: number; step: Step; state: TaskState; result: 'approved' | 'rejected' | null; comment: string | null
   image_id: number; filename: string; width: number; height: number; batch: string
   open_issues: number; updated_at: string | null
 }
-export interface TaskList { items: Task[]; total: number; counts: Record<TaskState, number>; batches: { id: number; name: string }[] }
+export interface TaskList {
+  items: Task[]; total: number; counts: Record<TaskState, number>; open: Record<Step, number>; batches: { id: number; name: string }[]
+}
 export interface StepCount { todo: number; done: number }
 export interface Campaign {
   id: number; name: string; batch: string; created_at: string; members: Record<Step, number[]>

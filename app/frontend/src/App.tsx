@@ -56,10 +56,12 @@ export default function App() {
 
   const logout = async () => { await api('/api/logout', { method: 'POST' }); setUser(null); window.location.hash = '/' }
   const page = parts[0] === 'issues' || (isStaff(user) && ['campaigns', 'admin'].includes(parts[0])) ? parts[0] : 'tasks'
-  const tab = (to: string, label: string, n = 0, what = '') => (
-    <a href={`#/${to === 'tasks' ? '' : to}`} title={n ? `${n} ${what}` : undefined}
+  const tab = (to: string, label: string, n?: number, what = '') => (
+    <a href={`#/${to === 'tasks' ? '' : to}`} title={n === undefined ? undefined : `${n} ${what}`}
       className={cn('flex items-center gap-1.5', page === to ? 'text-foreground' : 'hover:text-foreground')}>
-      {label}{n > 0 && <span className="rounded-full bg-red-600 px-1.5 text-[11px] leading-[18px] font-medium text-white">{n}</span>}
+      {label}{n !== undefined && (   // red while there is something to do, grey at 0
+        <span className={cn('rounded-full px-1.5 text-[11px] leading-[18px] font-medium', n ? 'bg-destructive text-white' : 'bg-muted text-muted-foreground')}>{n}</span>
+      )}
     </a>
   )
   return (
