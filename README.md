@@ -97,6 +97,11 @@ The header's red badges count your open tasks and the open issues you can see.
    - The campaign shows its progress (annotated, approved, sent back) and, per
      person, their tasks to do and done in each step. Deleting it removes its
      tasks; the annotations stay on the images.
+   - **Tasks** on a campaign lists every task of the campaign (the My tasks table,
+     with a Person column and filter), to oversee it: a row opens the editor on that
+     step's tasks of the campaign, whoever has them ("assigned to …" in the header). Staff
+     can correct, submit, approve, reject or cancel an approval for them; a task
+     submitted for its annotator goes to review as theirs.
 3. **My tasks:** the signed-in user's tasks, one row per image, in two tabs:
    **Annotate** (blue) and **Review** (orange), each with its open count (it opens on
    Review when reviews wait). Filter by state (to do, in progress, to fix (annotate
@@ -118,9 +123,9 @@ The header's red badges count your open tasks and the open issues you can see.
    selects a forklift / person and dragging it moves it whole; a drag on empty
    space selects every box it touches (move, hide or delete them together); hold **Space** to
    pan with the hand. The side panel has two tabs. **Shapes**, Photoshop-style: a
-   group per class present (forklifts, people) with an eye, a count and a fold, then a
+   group per class present (forklifts, people, drivers) with an eye, a count and a fold, then a
    compact row per object (eye, class colour, name, visible keypoints; delete on
-   hover); a row click selects it (⌘ / Ctrl / Shift: adds or removes). **Issues**:
+   hover, and on a person the forklift button: driver or not); a row click selects it (⌘ / Ctrl / Shift: adds or removes). **Issues**:
    the image's issues. Confirmations (background image, reject, deletions) open
    in the app, like the shortcuts: ↵ confirms, Esc cancels.
 4. **Issues:** the **Comment** tool (C) pins a question on a spot of the image.
@@ -163,7 +168,10 @@ the back corners are the counterweight's, whatever the wheels.
    follows them (dashed) until you drag one of its corners on the selected
    forklift: from then on it is yours (solid) and stays where you put it, e.g.
    to take in the forks. **B** puts it back around the keypoints. A person's box
-   (cyan) is adjusted the same way.
+   (cyan) is adjusted the same way. A person is a plain person or a driver (driving a
+   forklift; yellow, exported as its own class): a small Person / Driver choice
+   shows next to a box just drawn and on a right click on a person; **R** switches
+   the selected people.
 5. Only the forklift in focus (selected, hovered in the side panel, or one of
    its points hovered) shows its box and lines; the others show only their
    keypoints, a little transparent.
@@ -184,6 +192,7 @@ the back corners are the counterweight's, whatever the wheels.
 | drag a box corner or edge | resize the selected forklift's / person's box (hovering a box highlights it) |
 | B | the selected forklift's box back around its keypoints |
 | P | new person: drag a box, then drag its 4 keypoints into place |
+| R | selected people: driver (driving a forklift) or not |
 | C | comment: click the spot, write the issue in the side panel |
 | X / Shift+X | hide the selection / show all |
 | ⌘A / Ctrl+A | select every shown forklift / person (⌘, Ctrl or Shift + click a side-panel row: add / remove it) |
@@ -197,17 +206,18 @@ the back corners are the counterweight's, whatever the wheels.
 
 ## Export format
 
-`data.yaml` has 2 classes, `0: forklift` and `1: person`, both with 8
+`data.yaml` has 3 classes, `0: forklift`, `1: person` and `2: driver`, all with 8
 keypoints (`kpt_shape: [8, 3]`), because YOLO needs one shape for all classes:
 
 | Class | Keypoints |
 |---|---|
 | forklift | 1-4 roof corners (front-left, back-left, back-right, front-right), 5-8 bottom corners on the truck (same order) |
 | person | 1 middle of the head, 2 waist, 3 left foot, 4 right foot, 5-8 0 0 0 |
+| driver | a person driving a forklift: same keypoints as a person |
 
 - A keypoint that is hidden or outside the image is `0 0 0`.
 - Each box is exported as drawn (a forklift's: around its keypoints unless adjusted by hand), clipped to the image.
-- There is no `flip_idx`: the two classes would need different left/right swaps,
+- There is no `flip_idx`: the classes would need different left/right swaps,
   so YOLO disables horizontal-flip augmentation for this dataset.
 
 ## Development (without Docker)

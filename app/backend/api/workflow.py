@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import delete, desc, func, select
 
-from .auth import current_user, staff_user
+from .auth import current_user, is_staff, staff_user
 from .db import Batch, Campaign, Image, Issue, Member, Session, Task, User, now
 
 router = APIRouter()
@@ -175,21 +175,29 @@ def state_of(t: Task) -> str:
     return "done" if t.status == "done" else "fix" if t.comment else "progress" if t.started_at else "todo"
 
 
-def task_json(t: Task, img: Image, batch: Batch, issues: int = 0):
+def task_json(t: Task, img: Image, batch: Batch, issues: int = 0, assignee: str | None = None):
     at = t.done_at or t.started_at
-    return {"id": t.id, "step": t.step, "state": state_of(t), "result": t.result, "comment": t.comment,
+    return {"id": t.id, "campaign_id": t.campaign_id, "assignee": assignee, "step": t.step, "state": state_of(t),
+            "result": t.result, "comment": t.comment,
             "image_id": img.id, "filename": img.filename, "width": img.width, "height": img.height,
             "batch": batch.name, "open_issues": issues,
             "updated_at": at.isoformat() if at else None}
 
 
-def _mine(user: User):
-    """My tasks, with their image, batch and open issue count."""
+def _scope(user: User, campaign: int = 0):
+    """My tasks; or, for staff, every task of a campaign (to oversee it)."""
+    if campaign and not is_staff(user):
+        raise HTTPException(403)
+    return Task.campaign_id == campaign if campaign else Task.assignee_id == user.id
+
+
+def _tasks(where):
+    """The tasks, with their image, batch, open issue count and assignee's name."""
     issues = select(Issue.image_id, func.count().label("n")).where(Issue.resolved.is_(False)).group_by(Issue.image_id).subquery()
-    return (select(Task, Image, Batch, func.coalesce(issues.c.n, 0))
+    return (select(Task, Image, Batch, func.coalesce(issues.c.n, 0), User.username)
             .join(Image, Task.image_id == Image.id).join(Batch, Image.batch_id == Batch.id)
-            .outerjoin(issues, issues.c.image_id == Image.id)
-            .where(Task.assignee_id == user.id))
+            .outerjoin(issues, issues.c.image_id == Image.id).outerjoin(User, User.id == Task.assignee_id)
+            .where(where))
 
 
 PAGE = 50                         # tasks per page of the list, and per editor queue
@@ -198,11 +206,15 @@ SORTS = {"filename": Image.filename, "batch": Batch.name, "updated": func.coales
 
 @router.get("/api/tasks")
 def list_tasks(step: str = "", state: str = "", batch: int = 0, q: str = "", sort: str = "filename", order: str = "asc",
-               page: int = 1, user: User = Depends(current_user)):
-    """My tasks, filtered (step, state, batch, filename search), sorted and paginated; with the count per
-    state (same filters but the state), my open tasks per step (the tabs) and the batches I have tasks in."""
+               page: int = 1, campaign: int = 0, person: int = 0, user: User = Depends(current_user)):
+    """My tasks (staff: a campaign's, `campaign`), filtered (step, state, batch, person, filename search), sorted
+    and paginated; with the count per state (same filters but the state), the open tasks per step (the tabs)
+    and the batches they are in."""
+    scope = _scope(user, campaign)
     with Session() as s:
-        base = _mine(user)
+        base = _tasks(scope)
+        if person:
+            base = base.where(Task.assignee_id == person)
         if step in STEPS:
             base = base.where(Task.step == step)
         if batch:
@@ -217,8 +229,8 @@ def list_tasks(step: str = "", state: str = "", batch: int = 0, q: str = "", sor
         rows = s.execute(base.order_by(col.desc() if order == "desc" else col, Image.filename, Task.id)
                          .limit(PAGE).offset((max(page, 1) - 1) * PAGE)).all()
         batches = s.execute(select(Batch.id, Batch.name).join(Image, Image.batch_id == Batch.id).join(Task, Task.image_id == Image.id)
-                            .where(Task.assignee_id == user.id).distinct().order_by(Batch.name)).all()
-        open_ = dict(s.execute(select(Task.step, func.count()).where(Task.assignee_id == user.id, Task.status == "todo")
+                            .where(scope).distinct().order_by(Batch.name)).all()
+        open_ = dict(s.execute(select(Task.step, func.count()).where(scope, Task.status == "todo")
                                .group_by(Task.step)).all())
         return {"items": [task_json(*r) for r in rows], "total": total, "counts": counts,
                 "open": {step: open_.get(step, 0) for step in STEPS},
@@ -229,19 +241,25 @@ def list_tasks(step: str = "", state: str = "", batch: int = 0, q: str = "", sor
 def task_queue(task: int = 0, after: int = 0, user: User = Depends(current_user)):
     """What the editor goes through, PAGE tasks at a time: my open tasks of one step (that of task `task`,
     or `after`; by batch and filename) from task `task` (included), or the next ones after task `after`;
-    more: whether others follow."""
+    more: whether others follow. Staff on someone else's task: every task of that step of its campaign."""
     with Session() as s:
-        step = s.scalar(select(Task.step).where(Task.id == (task or after), Task.assignee_id == user.id))
-        rows = s.execute(_mine(user).where((Task.status == "todo") | Task.id.in_([task, after]), Task.step == step)
-                         .order_by(Batch.name, Image.filename, Task.step)).all()
+        t = s.get(Task, task or after)
+        if not t or (t.assignee_id != user.id and not is_staff(user)):
+            raise HTTPException(404, "not one of your tasks")
+        mine = t.assignee_id == user.id
+        q = _tasks(_scope(user, 0 if mine else t.campaign_id)).where(Task.step == t.step)
+        if mine:                                          # mine: the open ones (and those asked for)
+            q = q.where((Task.status == "todo") | Task.id.in_([task, after]))
+        rows = s.execute(q.order_by(Batch.name, Image.filename, Task.step)).all()
         ids = [r[0].id for r in rows]
         start = ids.index(task) if task in ids else ids.index(after) + 1 if after in ids else 0
         return {"items": [task_json(*r) for r in rows[start:start + PAGE]], "more": start + PAGE < len(rows)}
 
 
 def _task(s, tid: int, user: User, step: str) -> Task:
+    """My task, or anyone's for staff (overseeing a campaign)."""
     t = s.get(Task, tid)
-    if not t or t.assignee_id != user.id:
+    if not t or (t.assignee_id != user.id and not is_staff(user)):
         raise HTTPException(404, "not one of your tasks")
     if t.step != step or t.status != "todo":
         raise HTTPException(409, "this task is not open")
@@ -265,15 +283,16 @@ def submit(tid: int, user: User = Depends(current_user)):
     with Session() as s:
         t = _task(s, tid, user, "annotate")
         t.status, t.done_at, t.comment = "done", now(), None
+        annotator = t.assignee_id or user.id              # staff may submit it for its assignee
         s.get(Image, t.image_id).status = "annotated"
         # its review: the one that sent it back, open again (with the same reviewer if they still can), or a new one
         r = s.scalar(select(Task).where(Task.campaign_id == t.campaign_id, Task.image_id == t.image_id, Task.step == "review"))
         if r:
-            r.status, r.result, r.done_at, r.started_at, r.annotator_id = "todo", None, None, None, user.id
-            if r.assignee_id == user.id or r.assignee_id not in people(s, t.campaign_id, "review"):
+            r.status, r.result, r.done_at, r.started_at, r.annotator_id = "todo", None, None, None, annotator
+            if r.assignee_id == annotator or r.assignee_id not in people(s, t.campaign_id, "review"):
                 assign_one(s, r)
         else:
-            r = Task(campaign_id=t.campaign_id, image_id=t.image_id, step="review", annotator_id=user.id)
+            r = Task(campaign_id=t.campaign_id, image_id=t.image_id, step="review", annotator_id=annotator)
             s.add(r)
             s.flush()
             assign_one(s, r)
@@ -286,7 +305,7 @@ def unapprove(tid: int, user: User = Depends(current_user)):
     """An approval taken back by its reviewer: the review is open again, the image back to annotated."""
     with Session() as s:
         t = s.get(Task, tid)
-        if not t or t.assignee_id != user.id:
+        if not t or (t.assignee_id != user.id and not is_staff(user)):
             raise HTTPException(404, "not one of your tasks")
         if t.step != "review" or t.result != "approved":
             raise HTTPException(409, "only an approved review can be cancelled")

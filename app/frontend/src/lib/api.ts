@@ -12,7 +12,7 @@ export type Step = 'annotate' | 'review'
 export const STEP = { annotate: { title: 'Annotate', doing: 'Annotating', color: '#042AFF' }, review: { title: 'Review', doing: 'Reviewing', color: '#FC6D2F' } }
 export type TaskState = 'todo' | 'progress' | 'fix' | 'done'
 export interface Task {
-  id: number; step: Step; state: TaskState; result: 'approved' | 'rejected' | null; comment: string | null
+  id: number; campaign_id: number; assignee: string | null; step: Step; state: TaskState; result: 'approved' | 'rejected' | null; comment: string | null
   image_id: number; filename: string; width: number; height: number; batch: string
   open_issues: number; updated_at: string | null
 }

@@ -81,7 +81,7 @@ export default function App() {
         </div>
       </header>
       <main className="mx-auto max-w-6xl px-6 py-8">
-        {page === 'admin' ? <Admin user={user} /> : page === 'campaigns' ? <Campaigns />
+        {page === 'admin' ? <Admin user={user} /> : page === 'campaigns' ? (parts[1] ? <Tasks key={parts[1]} staff campaign={n(1)} /> : <Campaigns />)
           : page === 'issues' ? <Issues staff={isStaff(user)} /> : <Tasks staff={isStaff(user)} />}
       </main>
       <DialogHost />

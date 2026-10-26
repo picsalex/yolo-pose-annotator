@@ -1,6 +1,6 @@
 // Annotation campaigns (staff): start one on a batch with its people per step, follow its progress
 // (per step and per person), add or remove people on the way (the open tasks are dispatched again).
-import { Play, RefreshCw, Trash2, Users } from 'lucide-react'
+import { ListChecks, Play, RefreshCw, Trash2, Users } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { ask } from '@/components/dialog'
 import { PeopleSelect } from '@/components/people-select'
@@ -113,6 +113,7 @@ function CampaignCard({ c, users, run }: { c: Campaign; users: UserRow[]; run: R
           <CardDescription>{c.batch} · started {when(c.created_at)} · {c.rejected} sent back by the review</CardDescription>
         </div>
         <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={() => { window.location.hash = `/campaigns/${c.id}` }}><ListChecks />Tasks</Button>
           <Button size="sm" variant="outline" onClick={() => setEditing(editing ? null : c.members)}><Users />People</Button>
           <Button size="icon" variant="ghost" title="Delete the campaign (the annotations stay)" onClick={async () => {
             if (await ask({ title: `Delete ${c.name}`, danger: true, confirm: 'Delete', message: 'Its tasks go; the annotations stay on the images.' }) !== null)

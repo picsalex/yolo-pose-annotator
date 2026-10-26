@@ -10,15 +10,18 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { STEP, type Step, type Task, type TaskList, type TaskState, api } from '@/lib/api'
+import { type Campaign, STEP, type Step, type Task, type TaskList, type TaskState, api } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 const SIZE = 50                                       // per page (the API's)
 const STATES: [TaskState | '', string][] = [['', 'All'], ['todo', 'To do'], ['progress', 'In progress'], ['fix', 'To fix'], ['done', 'Done']]
 const label = (t: Task) => (t.state === 'done' ? t.result ?? 'submitted' : STATES.find(([s]) => s === t.state)![1].toLowerCase())
 
-export default function Tasks({ staff }: { staff: boolean }) {
-  const [f, setF] = useState({ step: 'review' as Step, state: '', batch: 0, q: '', sort: 'filename', order: 'asc', page: 1 })
+/** My tasks; or (staff) every task of campaign `campaign`, with who has it, to oversee it. */
+export default function Tasks({ staff, campaign = 0 }: { staff: boolean; campaign?: number }) {
+  const [f, setF] = useState({ step: 'review' as Step, state: '', batch: 0, person: 0, q: '', sort: 'filename', order: 'asc', page: 1, campaign })
+  const [c, setC] = useState<Campaign>()
+  useEffect(() => { if (campaign) api<Campaign[]>('/api/campaigns').then((l) => setC(l.find((x) => x.id === campaign))).catch(() => {}) }, [campaign])
   const [data, setData] = useState<TaskList | null>(null)
   const first = useRef(true)
   useEffect(() => {
@@ -47,8 +50,9 @@ export default function Tasks({ staff }: { staff: boolean }) {
     <Card>
       <CardHeader className="flex items-start justify-between">
         <div className="grid gap-1.5">
-          <CardTitle>My tasks</CardTitle>
-          <CardDescription>{f.step === 'annotate' ? 'Images to annotate, or to fix after a review.'
+          <CardTitle>{campaign ? <><a href="#/campaigns" className="text-muted-foreground hover:text-foreground">Campaigns</a> / {c?.name}</> : 'My tasks'}</CardTitle>
+          <CardDescription>{campaign ? 'Every task of the campaign and who has it. A row opens it: correct it, submit, approve or reject it for them.'
+            : f.step === 'annotate' ? 'Images to annotate, or to fix after a review.'
             : "Someone else's annotations: approve them, correct them, or send them back."}</CardDescription>
         </div>
         <Button disabled={!open} onClick={() => { window.location.hash = `/task/${open!.id}` }}>Continue</Button>
@@ -73,21 +77,24 @@ export default function Tasks({ staff }: { staff: boolean }) {
           ))}
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <Input placeholder="Search a filename" value={f.q} onChange={(e) => set({ q: e.target.value })} className="w-52" />
-            <select className={select} value={f.batch} onChange={(e) => set({ batch: Number(e.target.value) })}>
+            {campaign ? <select className={select} value={f.person} onChange={(e) => set({ person: Number(e.target.value) })}>
+              <option value={0}>Everyone</option>
+              {c?.people.filter((p) => p.id).map((p) => <option key={p.id} value={p.id!}>{p.username}</option>)}
+            </select> : <select className={select} value={f.batch} onChange={(e) => set({ batch: Number(e.target.value) })}>
               <option value={0}>All batches</option>
               {data?.batches.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
-            </select>
+            </select>}
           </div>
         </div>
         <Table>
           <TableHeader>
-            <TableRow>{head('filename', 'Image')}{head('batch', 'Batch')}<TableHead>State</TableHead><TableHead>Issues</TableHead>{head('updated', 'Updated')}{staff && <TableHead />}</TableRow>
+            <TableRow>{head('filename', 'Image')}{campaign ? <TableHead>Person</TableHead> : head('batch', 'Batch')}<TableHead>State</TableHead><TableHead>Issues</TableHead>{head('updated', 'Updated')}{staff && <TableHead />}</TableRow>
           </TableHeader>
           <TableBody>
             {data?.items.map((t) => (
               <TableRow key={t.id} className="cursor-pointer" onClick={() => { window.location.hash = `/task/${t.id}` }}>
                 <TableCell className="max-w-80 truncate font-medium" title={t.filename}>{t.filename}</TableCell>
-                <TableCell className="text-muted-foreground">{t.batch}</TableCell>
+                <TableCell className="text-muted-foreground">{campaign ? t.assignee ?? 'nobody yet' : t.batch}</TableCell>
                 <TableCell>
                   <Badge variant={t.state === 'fix' || t.result === 'rejected' ? 'destructive' : t.state === 'done' ? 'success' : 'outline'}
                     title={t.comment ?? undefined}>{label(t)}</Badge>
@@ -104,7 +111,7 @@ export default function Tasks({ staff }: { staff: boolean }) {
             ))}
           </TableBody>
         </Table>
-        {data && !data.items.length && <p className="text-sm text-muted-foreground">No {STEP[f.step].title.toLowerCase()} tasks{f.state || f.batch || f.q ? ' match these filters' : ' yet'}.</p>}
+        {data && !data.items.length && <p className="text-sm text-muted-foreground">No {STEP[f.step].title.toLowerCase()} tasks{f.state || f.batch || f.person || f.q ? ' match these filters' : ' yet'}.</p>}
         <div className={cn('flex items-center justify-end gap-2 text-sm text-muted-foreground', !data?.total && 'hidden')}>
           {data && `${(f.page - 1) * SIZE + 1}-${Math.min(f.page * SIZE, data.total)} of ${data.total}`}
           <Button size="icon" variant="ghost" disabled={f.page <= 1} onClick={() => setF({ ...f, page: f.page - 1 })}><ChevronLeft /></Button>

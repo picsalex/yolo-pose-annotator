@@ -1,5 +1,5 @@
 import {
-  ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, ImageOff, Keyboard, Loader2, MessageSquarePlus, MousePointer2,
+  ArrowLeft, Check, ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff, Forklift, ImageOff, Keyboard, Loader2, MessageSquarePlus, MousePointer2,
   Maximize, Redo2, Save, Trash2, Truck, Undo2, UserRound, X, ZoomIn, ZoomOut,
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -44,6 +44,7 @@ const SHORTCUTS: [string, [string, string][]][] = [
     ['V', 'hovered point visible / hidden'],
     ['⇧ drag', 'the 4 bottom corners together'],
     ['B', 'forklift box back around its points'],
+    ['R', 'selected people: driver (on a forklift) or not'],
     ['⌘A', 'select all (⌘ / ⇧ click a side-panel row: add / remove it)'],
     ['Del', 'delete the selection'],
     ['⌘Z / ⇧⌘Z', 'undo / redo'],
@@ -82,6 +83,7 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
   const [draft, setDraft] = useState<{ x: number; y: number; text: string } | null>(null)   // a new issue being written
   const [help, setHelp] = useState(false)                           // the shortcuts popup
   const [tab, setTab] = useState<'shapes' | 'issues'>(issueId ? 'issues' : 'shapes')
+  const [who, setWho] = useState<{ id: string; x: number; y: number } | null>(null)   // person or driver? (drawn / right-clicked)
   const loadedRef = useRef<number | null>(null)
 
   // the queue: my open tasks, from the one opened; or a batch's images, from imageId (else the first not approved)
@@ -110,6 +112,7 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
     ed.onChange = setState
     ed.onPin = (id) => { setActiveIssue((a) => (a === id ? null : id)); setTab('issues') }
     ed.onComment = (x, y) => { setDraft({ x, y, text: '' }); setActiveIssue(null); setTab('issues') }
+    ed.onPerson = (id, x, y) => setWho({ id, x, y })
     editorRef.current = ed
     loadModel().then((m) => { ed.model = m }).catch(() => {})    // without it, new points start visible
     ed.resize()
@@ -138,6 +141,7 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
         setIssues(iss)
         setActiveIssue(isStart(current) && issueId ? issueId : null)      // opened from the Issues page
         setDraft(null)
+        setWho(null)
         loadedRef.current = current.id
         window.history.replaceState(null, '', current.task ? `#/task/${current.task.id}` : `#/annotate/${batchId}/${current.id}`)
         setError('')
@@ -176,11 +180,11 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
     const ed = editorRef.current
     if (!ed || !current || loadedRef.current !== current.id) return
     await api(`/api/images/${current.id}/annotation`, { method: 'PUT', body: { data: ed.serialize() } })
-    if (current.task?.state === 'todo' && ed.edited()) {
+    if (current.task?.state === 'todo' && current.task.assignee === user.username && ed.edited()) {   // only its assignee starts it
       await api(`/api/tasks/${current.task.id}/start`, { method: 'POST' })
       setQueue((q) => q!.map((it) => (it === current ? { ...it, task: { ...it.task!, state: 'progress' } } : it)))
     }
-  }, [current])
+  }, [current, user.username])
 
   // closing the tab, reloading or typing another address: save what is there (status unchanged)
   useEffect(() => {
@@ -218,6 +222,7 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
   }, [forward, index, queue, save])
 
   const task = current?.task, live = task && task.state !== 'done' ? task : null   // the image's task, when still open
+  const others = !!task && task.assignee !== user.username                            // staff overseeing someone's task
   /** ↵: saved, then an open annotate task submitted (to review) or an open review approved (or rejected,
    * with a comment for the annotator); then the next image. */
   const finish = useCallback(async (approved = true, comment = '') => {
@@ -292,12 +297,13 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
         case 'p': case 'P': ed.startHuman(); break
         case 'v': case 'V': ed.toggleVisibility(); break
         case 'b': case 'B': ed.resetBox(); break
+        case 'r': case 'R': ed.toggleDriver(); setWho(null); break
         case 'x': ed.setHidden(ed.selected, true); break
         case 'X': ed.showAll(); break
         case '0': ed.fitView(); break
         case '+': case '=': ed.zoom(1.25); break
         case '-': ed.zoom(0.8); break
-        case 'Escape': ed.cancel(); break
+        case 'Escape': setWho(null); ed.cancel(); break
         case 'Delete': case 'Backspace': ed.deleteSelection(); break
         case 'Enter': e.preventDefault(); finish(); break
         case 'ArrowRight': e.preventDefault(); goTo(index + 1); break
@@ -343,13 +349,13 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
   return (
     <div className="flex h-screen flex-col">
       <header className="flex h-12 shrink-0 items-center gap-3 border-b px-3">
-        <Button variant="ghost" size="icon" title={taskId ? 'Back to my tasks' : 'Back to the batches'}
-          onClick={async () => { await save().catch(() => {}); window.location.hash = taskId ? '/' : '/admin' }}>
+        <Button variant="ghost" size="icon" title={!taskId ? 'Back to the batches' : others ? 'Back to the campaign' : 'Back to my tasks'}
+          onClick={async () => { await save().catch(() => {}); window.location.hash = !taskId ? '/admin' : others ? `/campaigns/${task!.campaign_id}` : '/' }}>
           <ArrowLeft />
         </Button>
         {task ? <span className="rounded px-2 py-0.5 text-xs font-semibold text-white" style={{ background: STEP[task.step].color }}>{STEP[task.step].doing}</span>
           : <span className="font-medium">{title}</span>}
-        {current && <span className="truncate text-sm text-muted-foreground">{task ? `${task.batch} / ` : ''}{current.filename}</span>}
+        {current && <span className="truncate text-sm text-muted-foreground">{task ? `${task.batch} / ` : ''}{current.filename}{others ? ` · ${task!.assignee ? `assigned to ${task!.assignee}` : 'not assigned yet'}` : ''}</span>}
         {task ? <Badge variant={task.state === 'done' ? 'success' : task.state === 'fix' ? 'destructive' : 'outline'}>
           {task.result ?? STATES[task.state]}</Badge>
           : current && <Badge variant={current.status === 'approved' ? 'success' : 'outline'}>{current.status}</Badge>}
@@ -379,9 +385,9 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
           <canvas
             ref={canvasRef}
             className="absolute inset-0 size-full"
-            onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); ed?.pointerDown(e.nativeEvent) }}
+            onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); setWho(null); ed?.pointerDown(e.nativeEvent) }}
             onPointerMove={(e) => ed?.pointerMove(e.nativeEvent)}
-            onPointerUp={() => ed?.pointerUp()}
+            onPointerUp={(e) => ed?.pointerUp(e.nativeEvent)}
             onPointerLeave={() => ed?.pointerLeave()}
             onContextMenu={(e) => e.preventDefault()}
           />
@@ -405,6 +411,19 @@ export default function Annotate({ user, batchId, imageId, taskId, issueId, them
                 className={cn('rounded-xl', t.active ? 'bg-[#042AFF] text-white hover:bg-[#042AFF] hover:text-white' : 'hover:bg-[#042AFF]/15')}><t.icon /></Button>
             ) : <div key={k} className="my-1 h-px w-6 bg-border" />)}
           </nav>
+          {who && (
+            <div className="absolute z-10 grid gap-1 rounded-lg border bg-background p-1 text-xs shadow-lg" style={{ left: who.x + 6, top: who.y + 6 }}>
+              <div className="flex gap-1">{[false, true].map((driver) => (
+                <Button key={String(driver)} size="sm" className="h-7"
+                  variant={!!state?.humans.find((h) => h.id === who.id)?.driver === driver ? 'secondary' : 'ghost'}
+                  onClick={() => { ed?.toggleDriver(who.id, driver); setWho(null) }}>
+                  <span className="size-2 rounded-full" style={{ background: driver ? COLORS.driver : COLORS.person }} />
+                  {driver ? 'Driver' : 'Person'}
+                </Button>
+              ))}</div>
+              <p className="px-2 pb-1 text-muted-foreground">Tip: press R to switch the selected people.</p>
+            </div>
+          )}
           {help && <ShortcutsPopup onClose={() => setHelp(false)} />}
         </div>
         <aside className="flex w-72 shrink-0 flex-col gap-4 overflow-y-auto border-l p-3 text-sm">
@@ -473,7 +492,7 @@ function ShortcutsPopup({ onClose }: { onClose: () => void }) {
             </div>
           ))}
         </div>
-        <div className="border-t pt-3 text-xs text-muted-foreground">Points: <span style={{ color: COLORS.visible }}>green</span> visible, grey hidden (exported as 0 0 0), white ring = roof corner. Forklift: 0-3 roof corners, 4-7 bottom corners on the truck (under 0-3: where its bottom edge turns the corner, not on a wheel or fork). <span style={{ color: COLORS.forklift }}>Pink</span>: a forklift's box, dashed while it follows the points; <span style={{ color: COLORS.person }}>cyan</span>: a person's. <span style={{ color: COLORS.issue }}>Violet</span> pins: open issues (a resolved one shows, grey, only while opened in the side panel). People: H head, W waist, L left foot, R right foot (the person's own left / right).</div>
+        <div className="border-t pt-3 text-xs text-muted-foreground">Points: <span style={{ color: COLORS.visible }}>green</span> visible, grey hidden (exported as 0 0 0), white ring = roof corner. Forklift: 0-3 roof corners, 4-7 bottom corners on the truck (under 0-3: where its bottom edge turns the corner, not on a wheel or fork). <span style={{ color: COLORS.forklift }}>Pink</span>: a forklift's box, dashed while it follows the points; <span style={{ color: COLORS.person }}>cyan</span>: a person's (<span style={{ color: COLORS.driver }}>yellow</span>: a driver's, R). <span style={{ color: COLORS.issue }}>Violet</span> pins: open issues (a resolved one shows, grey, only while opened in the side panel). People: H head, W waist, L left foot, R right foot (the person's own left / right).</div>
       </div>
     </div>
   )
@@ -483,10 +502,11 @@ function ShortcutsPopup({ onClose }: { onClose: () => void }) {
  * instance (eye, class colour, name, visible points; delete on hover). A row click selects (⌘ / ⇧: adds
  * or removes), hovering highlights it on the image. */
 function Layers({ state, ed }: { state: EditorState; ed: Editor | null }) {
-  const [fold, setFold] = useState<Record<string, boolean>>({ forklifts: true, people: true })   // groups start folded
+  const [fold, setFold] = useState<Record<string, boolean>>({ forklifts: true, people: true, drivers: true })   // groups start folded
   const groups = [
     { key: 'forklifts', title: 'Forklifts', name: 'Forklift', color: COLORS.forklift, of: KEYPOINTS, items: state.forklifts },
-    { key: 'people', title: 'People', name: 'Person', color: COLORS.person, of: 4, items: state.humans },
+    { key: 'people', title: 'People', name: 'Person', color: COLORS.person, of: 4, items: state.humans.filter((h) => !h.driver) },
+    { key: 'drivers', title: 'Drivers', name: 'Driver', color: COLORS.driver, of: 4, items: state.humans.filter((h) => h.driver) },
   ]
   const all = [...state.forklifts, ...state.humans]
   const eye = (hidden: boolean, ids: string[], title: string) => (
@@ -520,6 +540,13 @@ function Layers({ state, ed }: { state: EditorState; ed: Editor | null }) {
                 {stripe(g.color)}
                 <span className="flex-1 truncate pl-6">{g.name} {k + 1}</span>
                 <span className="text-xs text-muted-foreground" title="visible keypoints">{it.visible}/{g.of}</span>
+                {g.key !== 'forklifts' && (
+                  <button type="button" title={g.key === 'drivers' ? 'Not a driver (R)' : 'Driver: driving a forklift (R)'}
+                    onClick={(e) => { e.stopPropagation(); ed?.toggleDriver(it.id) }}
+                    className="invisible flex size-8 items-center justify-center text-muted-foreground group-hover:visible hover:text-foreground">
+                    <Forklift className="size-3.5" />
+                  </button>
+                )}
                 <button type="button" title="Delete (Del)" onClick={(e) => { e.stopPropagation(); ed?.select(it.id); ed?.deleteSelection() }}
                   className="invisible flex size-8 items-center justify-center text-muted-foreground group-hover:visible hover:text-destructive">
                   <Trash2 className="size-3.5" />

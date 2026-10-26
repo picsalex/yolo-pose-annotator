@@ -4,7 +4,7 @@
 import { type Box, type ForkliftAnn, NAMES, boxOf, exportForklift, fromRoof } from '@/lib/forklift'
 import { type Model, hiddenPoints } from '@/lib/visibility'
 
-export interface Human { id: string; box: Box; kpts: [number, number, number][] }
+export interface Human { id: string; box: Box; kpts: [number, number, number][]; driver?: boolean }   // driver: driving a forklift
 export interface Ann { forklifts: ForkliftAnn[]; humans: Human[] }
 type Hit =
   | { kind: 'fk'; id: string; i: number }          // a forklift keypoint
@@ -25,7 +25,7 @@ const PERSON_EDGES = [[0, 1], [1, 2], [1, 3]]
 // a person drawn by hand starts with its keypoints here, hidden until dragged into place
 const PERSON_TEMPLATE = [[0.5, 0.07], [0.5, 0.53], [0.62, 0.98], [0.38, 0.98]]
 /** Each class's colour: its boxes, a person's keypoints, the layers panel. */
-export const COLORS = { forklift: '#FF64DA', person: '#00FFFF', visible: '#00F344', issue: '#7D24FF' }   // the brand palette
+export const COLORS = { forklift: '#FF64DA', person: '#00FFFF', driver: '#E1FF25', visible: '#00F344', issue: '#7D24FF' }   // the brand palette
 const LINES = '#F3F3F3'                            // a forklift's roof outline, a person's skeleton
 const HIT_RADIUS = 9
 // the box handles: the box sides each one moves (x: 0 left / 2 right, y: 1 top / 3 bottom, -1: none)
@@ -46,7 +46,7 @@ export interface EditorState {
   canRedo: boolean
   selected: string[]                                // ids of the selected forklifts / people
   forklifts: { id: string; visible: number; hidden: boolean }[]
-  humans: { id: string; visible: number; hidden: boolean }[]
+  humans: { id: string; visible: number; hidden: boolean; driver: boolean }[]
   hover: string
 }
 
@@ -71,6 +71,7 @@ export class Editor {
   private drag: Hit | null = null
   private shift: { from: [number, number]; kp: [number, number][] } | null = null   // Shift+drag: all lower points together
   private pan: { x: number; y: number } | null = null
+  private rightClick: [number, number] | null = null    // where the right button went down (no drag: a right click)
   private space = false                                  // Space held: the hand (pan) instead of the current tool
   // a selected forklift / person dragged by its body, moved as a whole (from: where the drag began)
   private moving: { from: [number, number]; orig: (ForkliftAnn | Human)[]; moved: boolean } | null = null
@@ -86,6 +87,7 @@ export class Editor {
   onChange: (s: EditorState) => void = () => {}
   onPin: (id: number) => void = () => {}                  // an issue pin clicked
   onComment: (x: number, y: number) => void = () => {}    // the comment tool clicked a spot
+  onPerson: (id: string, sx: number, sy: number) => void = () => {}   // a person drawn or right-clicked: person or driver?
 
   constructor(private canvas: HTMLCanvasElement) {
     this.ctx = canvas.getContext('2d')!
@@ -245,6 +247,7 @@ export class Editor {
     const r = this.canvas.getBoundingClientRect()
     const sx = e.clientX - r.left, sy = e.clientY - r.top
     const [x, y] = this.inImage(this.toImage(sx, sy))
+    this.rightClick = e.button === 2 ? [sx, sy] : null
     if (e.button === 1 || e.button === 2 || this.space) { this.pan = { x: sx, y: sy }; this.updateCursor(); return }
     if (this.mode === 'roof') {
       this.pendingRoof.push([x, y])
@@ -350,7 +353,11 @@ export class Editor {
     this.changed()
   }
 
-  pointerUp() {
+  pointerUp(e: PointerEvent) {
+    const r = this.canvas.getBoundingClientRect(), sx = e.clientX - r.left, sy = e.clientY - r.top
+    const id = this.rightClick && Math.hypot(sx - this.rightClick[0], sy - this.rightClick[1]) < 4 && this.instanceAt(...this.toImage(sx, sy))
+    if (id && this.human(id)) { this.selected = [id]; this.changed(); this.onPerson(id, sx, sy) }
+    this.rightClick = null
     const d = this.drag
     if (d) {
       this.drag = null
@@ -371,6 +378,7 @@ export class Editor {
           [box[0] + u * (box[2] - box[0]), box[1] + v * (box[3] - box[1]), 0] as [number, number, number]) }
         this.ann.humans.push(h)
         this.selected = [h.id]
+        this.onPerson(h.id, ...this.toScreen(box[2], box[3]))
       }
       this.mode = 'idle'
       this.changed()
@@ -441,6 +449,16 @@ export class Editor {
     this.changed()
   }
 
+  /** R: the selected people driving / not driving a forklift (all drivers if one is not); or person `id`. */
+  toggleDriver(id?: string, driver?: boolean) {
+    const set = this.ann.humans.filter((h) => (id ? h.id === id : this.selected.includes(h.id)))
+    if (!set.length) return
+    this.snapshot()
+    driver ??= set.some((h) => !h.driver)
+    for (const h of set) h.driver = driver
+    this.changed()
+  }
+
   /** B: the selected forklifts' boxes back around their keypoints. */
   resetBox() {
     const set = this.ann.forklifts.filter((f) => f.box && this.selected.includes(f.id))
@@ -488,7 +506,7 @@ export class Editor {
     for (const { id } of [...this.ann.forklifts, ...this.ann.humans]) this.contain(id)   // after a load, undo, V…
     this.requestDraw()
     const fk = this.ann.forklifts.map((f) => ({ id: f.id, visible: f.kp.filter((_, i) => f.vis[i] !== false).length, hidden: this.hidden.has(f.id) }))
-    const hu = this.ann.humans.map((h) => ({ id: h.id, visible: h.kpts.filter((k) => k[2]).length, hidden: this.hidden.has(h.id) }))
+    const hu = this.ann.humans.map((h) => ({ id: h.id, visible: h.kpts.filter((k) => k[2]).length, hidden: this.hidden.has(h.id), driver: !!h.driver }))
     let hover = ''
     const h = this.hover
     if (h?.kind === 'fk') hover = `${h.i} ${NAMES[h.i]} (${h.i < 4 ? '' : 'Shift+drag: all 4 bottom corners; '}V visible / hidden)`
@@ -655,7 +673,8 @@ export class Editor {
     const c = this.ctx
     const selected = this.selected.includes(h.id) || this.highlight === h.id
     c.globalAlpha = focus.length && !focus.includes(h.id) ? 0.3 : 1
-    this.drawBox(h.id, h.box, COLORS.person)
+    const color = h.driver ? COLORS.driver : COLORS.person
+    this.drawBox(h.id, h.box, color)
     c.lineWidth = 1.2
     c.beginPath()
     for (const [a, b] of PERSON_EDGES) {
@@ -670,7 +689,7 @@ export class Editor {
     h.kpts.forEach(([x, y, v], i) => {
       if (!v && !selected) return
       const hovered = this.hover?.kind === 'hu' && this.hover.id === h.id && this.hover.i === i
-      this.dot(x, y, v ? COLORS.person : 'rgba(158,158,158,0.6)', false, PERSON_LABELS[i], hovered ? 6.5 : 4.5)
+      this.dot(x, y, v ? color : 'rgba(158,158,158,0.6)', false, PERSON_LABELS[i], hovered ? 6.5 : 4.5)
     })
     c.globalAlpha = 1
   }
